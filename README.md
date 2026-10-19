@@ -20,7 +20,7 @@
 [![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-blue?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/airdrop-llm/airdrop-llm)
 [![Hardware Backends](https://img.shields.io/badge/Hardware-Apple%20Metal%20%7C%20NVIDIA%20CUDA%20%7C%20CPU-9945ff?style=for-the-badge&logo=nvidia&logoColor=white)](https://github.com/airdrop-llm/airdrop-llm)
 [![Zero Cloud](https://img.shields.io/badge/Privacy-100%25%20Offline%20Air--Gapped-red?style=for-the-badge&logo=shield&logoColor=white)](https://github.com/airdrop-llm/airdrop-llm)
-[![Stars](https://img.shields.io/github/stars/airdrop-llm/airdrop-llm?style=for-the-badge&logo=github&color=gold)](https://github.com/airdrop-llm/airdrop-llm/stargazers)
+[![Stars](https://img.shields.io/github/stars/airdrop-llm/airdrop-llm?style=for-the-badge&logo=github&color=gold)](https://github.com/AirDrop-LLM/AirDrop-LLM/stargazers)
 
 <br/>
 
