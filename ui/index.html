@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="AirDrop-LLM Valkyrie-HUD: Cyberpunk Retro-Futuristic TUI Telemetry & Distributed Inference Interface">
+    <title>VALKYRIE-HUD // AIRDROP-LLM DISTRIBUTED BROKER</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="tui-root">
+    <div class="hud-frame-container">
+        <!-- ═══════════ TOP SYSTEM DIAGNOSTIC BANNER ═══════════ -->
+        <header class="hud-top-bar">
+            <div class="top-bar-left">
+                <span class="ascii-crosshair">[+]</span>
+                <span class="hud-logo-text">VALKYRIE-HUD</span>
+                <span class="hud-sub-logo">// AIRDROP-LLM ZERO-CLOUD BROKER</span>
+                <span class="sys-version-pill">REV: v0.1.0-PROD</span>
+            </div>
+            <div class="top-bar-center">
+                <span class="bar-dim-lbl">GATEWAY:</span>
+                <span class="bar-cyan-val" id="gatewayUrlDisplay">ws://localhost:3001</span>
+                <span class="bar-sep">│</span>
+                <span class="bar-dim-lbl">FABRIC:</span>
+                <span class="bar-amber-val" id="fabricModeDisplay">OFFLINE_HOTSPOT</span>
+                <span class="bar-sep">│</span>
+                <span class="bar-dim-lbl">NODES:</span>
+                <span class="bar-emerald-val" id="activeNodesHeaderCount">1 ACTIVE</span>
+            </div>
+            <div class="top-bar-right">
+                <span class="uplink-badge badge-active" id="uplinkBadge">[UPLINK: SYNCHRONIZED]</span>
+                <span class="clock-readout" id="hudClock">00:00:00.000 UTC</span>
+            </div>
+        </header>
+
+        <!-- ═══════════ MIDDLE VIEWPORT GRID ═══════════ -->
+        <main class="hud-matrix-grid">
+            <!-- ───── LEFT COLUMN: HARDWARE TOPOLOGY SLOTS (TRUTHFUL) ───── -->
+            <section class="tui-panel topology-panel">
+                <div class="panel-banner">
+                    <span class="panel-icon">[::]</span>
+                    <h2 class="panel-caption">HARDWARE_TOPOLOGY // P2P_FABRIC_SLOTS</h2>
+                    <span class="panel-status-tag tag-cyan" id="topologyStateTag">1 NODE ONLINE</span>
+                </div>
+
+                <div class="panel-content-body slots-body">
+                    <!-- Slot 00: Connected Master Host -->
+                    <div class="tui-slot-box" id="nodeSlot0">
+                        <div class="slot-border-top">╔════ LOCAL P2P PEER SLOT 00 [MASTER] ══════════════════════════════════════╗</div>
+                        <div class="slot-details">
+                            <div class="tui-row">
+                                <span class="lbl-dim">HOST_IDENT:</span>
+                                <span class="val-cyan" id="node0HostName">mohits-MacBook-Air.local</span>
+                            </div>
+                            <div class="tui-row">
+                                <span class="lbl-dim">HARDWARE:</span>
+                                <span class="val-white" id="node0HwDesc">Apple M5 · 10 Cores · Apple Metal GPU</span>
+                            </div>
+                            <div class="tui-row">
+                                <span class="lbl-dim">RAM_POOL:</span>
+                                <span class="val-emerald" id="node0RamVal">16.0 GB Unified Memory</span>
+                            </div>
+                            <div class="tui-row">
+                                <span class="lbl-dim">RAM_MATRIX:</span>
+                                <span class="val-bar-emerald" id="node0RamBar">[████████████░░░░░░░░] 60.5%</span>
+                            </div>
+                            <div class="tui-row">
+                                <span class="lbl-dim">ROLE_TASK:</span>
+                                <span class="val-amber">Cluster Head · Input Embeddings & Initial Layers</span>
+                            </div>
+                        </div>
+                        <div class="slot-border-bottom">╚════════════════════════════════════════════════════════════════════════════╝</div>
+                    </div>
+
+                    <!-- Slot 01: Peer Worker Slot (Truthful Awaiting State) -->
+                    <div class="tui-slot-box slot-awaiting" id="nodeSlot1">
+                        <div class="slot-border-top">╔════ REMOTE P2P PEER SLOT 01 [WORKER] ═════════════════════════════════════╗</div>
+                        <div class="slot-details" id="nodeSlot1Content">
+                            <div class="awaiting-line blinking-text">║ [AWAITING UDP BROADCAST PING ON PORT :9998...]                          ║</div>
+                            <div class="awaiting-subline">║ Run 'airdrop join' on peer device to pool hardware resources              ║</div>
+                        </div>
+                        <div class="slot-border-bottom">╚════════════════════════════════════════════════════════════════════════════╝</div>
+                    </div>
+
+                    <!-- Cluster Telemetry Summary Strip -->
+                    <div class="tui-telemetry-summary">
+                        <div class="summary-metric-box">
+                            <span class="sm-label">TOTAL POOLED RAM</span>
+                            <span class="sm-value cyan" id="summaryPooledRam">16.0 GB</span>
+                        </div>
+                        <div class="summary-metric-box">
+                            <span class="sm-label">TOTAL CPU CORES</span>
+                            <span class="sm-value amber" id="summaryTotalCores">10 CORES</span>
+                        </div>
+                        <div class="summary-metric-box">
+                            <span class="sm-label">COMPUTE BACKENDS</span>
+                            <span class="sm-value purple" id="summaryBackends">Metal</span>
+                        </div>
+                        <div class="summary-metric-box">
+                            <span class="sm-label">P2P LATENCY (RTT)</span>
+                            <span class="sm-value emerald" id="summaryLatency">0.8 ms</span>
+                        </div>
+                    </div>
+
+                    <!-- ★ COMBINED HARDWARE MODEL RECOMMENDER PANEL ★ -->
+                    <div class="tui-recommend-box" id="recommendationBox">
+                        <div class="rec-header">
+                            <span class="rec-icon">★</span>
+                            <span class="rec-title">HARDWARE_SYNTHESIS // MODEL FIT RECOMMENDER</span>
+                            <span class="rec-status-badge" id="recBadge">[OPTIMAL FIT]</span>
+                        </div>
+                        <div class="rec-body">
+                            <div class="rec-row">
+                                <span class="lbl-dim">RECOMMENDED_MODEL:</span>
+                                <span class="val-gold bold" id="recModelName">Qwen 3.5 9B (Q4_K_M)</span>
+                            </div>
+                            <div class="rec-row">
+                                <span class="lbl-dim">RAM_UTILIZATION:</span>
+                                <span class="val-cyan" id="recRamFit">7.8 GB / 16.0 GB (48.7%)</span>
+                            </div>
+                            <div class="rec-row">
+                                <span class="lbl-dim">SHARDING_STRATEGY:</span>
+                                <span class="val-white" id="recShardingPlan">Single-node Metal acceleration (Layers 0-31)</span>
+                            </div>
+                            <div class="rec-row">
+                                <span class="lbl-dim">SCALE_HORIZON:</span>
+                                <span class="val-dim" id="recUpgradeHint">Connect 1 more peer device with 16GB RAM to pool 32GB for 32B models!</span>
+                            </div>
+                        </div>
+                        <div class="rec-actions">
+                            <button class="tui-btn-action" id="testPeerToggleBtn" onclick="togglePeerSimulation()">[SIMULATE PEER JOIN / TEST 32GB POOL]</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ───── RIGHT COLUMN: INTERACTIVE TUI INFERENCE CHATBOT ───── -->
+            <section class="tui-panel inference-panel">
+                <div class="panel-banner">
+                    <span class="panel-icon">[$]</span>
+                    <h2 class="panel-caption">INFERENCE_SHELL // PIPELINE_EXEC_CHANNEL</h2>
+                    <div class="panel-config-chips">
+                        <span class="cfg-chip" id="cfgTokensBtn" title="Click to cycle tokens">[TKNS: 512]</span>
+                        <span class="cfg-chip" id="cfgTempBtn" title="Click to cycle temp">[TEMP: 0.7]</span>
+                        <span class="cfg-chip purple" id="cfgEngineBtn">[ENGINE: LLAMA-CLI]</span>
+                        <button class="clear-terminal-btn" id="clearTerminalBtn" title="Clear Screen">[CLEAR]</button>
+                    </div>
+                </div>
+
+                <!-- Terminal Quick Command Action Chips -->
+                <div class="tui-quick-actions">
+                    <span class="qa-label">&gt; QUICK_COMMANDS:</span>
+                    <button class="qa-chip highlight-chip" onclick="executeQuickPrompt('recommend-models')">[★ recommend-models]</button>
+                    <button class="qa-chip" onclick="executeQuickPrompt('status')">[status]</button>
+                    <button class="qa-chip" onclick="executeQuickPrompt('benchmark network probe')">[network-probe]</button>
+                    <button class="qa-chip" onclick="executeQuickPrompt('explain pipeline parallelism')">[explain-pipeline]</button>
+                    <button class="qa-chip" onclick="executeQuickPrompt('what are current hardware limits?')">[hardware-limits]</button>
+                </div>
+
+                <!-- Terminal Output Buffer (Scrollable) -->
+                <div class="tui-terminal-output" id="terminalOutputBuffer">
+                    <div class="term-line term-system-banner">
+                        <span class="cyan">=============================================================================</span><br>
+                        <span class="white bold">⚡ AirDrop-LLM Valkyrie Interactive Pipeline Shell</span><br>
+                        <span class="amber">Host: mohits-MacBook-Air.local (Apple M5 · 10 Cores · Metal Engine)</span><br>
+                        <span class="dim">Type a prompt or query below and press [ENTER] to execute model inference.</span><br>
+                        <span class="cyan">=============================================================================</span>
+                    </div>
+                </div>
+
+                <!-- Terminal Interactive Command Line Input -->
+                <div class="tui-input-command-line">
+                    <span class="term-prompt-symbol">user@airdrop-llm:~$</span>
+                    <input type="text" id="terminalInput" class="term-input-field" placeholder="Type prompt here... (e.g. 'Explain pipeline parallelism')" autocomplete="off" spellcheck="false">
+                    <button id="terminalExecuteBtn" class="term-execute-button" title="Execute Prompt">
+                        <span>[ EXECUTE / ↵ ]</span>
+                    </button>
+                </div>
+            </section>
+        </main>
+
+        <!-- ═══════════ LOWER KERNEL CONSOLE (FULL-WIDTH STREAM) ═══════════ -->
+        <footer class="tui-panel kernel-console-panel">
+            <div class="panel-banner">
+                <span class="panel-icon">[&gt;]</span>
+                <h2 class="panel-caption">KERNEL_LOGS // /dev/kmsg TELEMETRY STREAM</h2>
+                <div class="kernel-live-badge">
+                    <span class="pulse-dot-emerald"></span>
+                    <span>LIVE SOCKET PULSE (:3001)</span>
+                </div>
+            </div>
+            <div class="kernel-stream-body" id="kernelStreamBody">
+                <div class="k-line"><span class="k-ts">[00:00:00.000]</span> <span class="k-tag tag-init">[SYSTEM]</span> Valkyrie-HUD diagnostics client initialized.</div>
+                <div class="k-line"><span class="k-ts">[00:00:00.001]</span> <span class="k-tag tag-ok">[NETWORK]</span> Telemetry socket attached to ws://localhost:3001.</div>
+            </div>
+        </footer>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

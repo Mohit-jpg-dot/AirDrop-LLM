@@ -1,0 +1,54 @@
+{
+  "name": "airdrop-llm",
+  "version": "0.1.0",
+  "description": "Zero-dependency, offline, multi-node pipeline-parallel LLM inference broker. Pool heterogeneous consumer hardware over local networks for distributed model execution.",
+  "keywords": [
+    "llm",
+    "inference",
+    "distributed",
+    "offline",
+    "pipeline-parallel",
+    "edge-computing",
+    "p2p",
+    "rust",
+    "gpu",
+    "cuda",
+    "metal",
+    "apple-silicon"
+  ],
+  "author": "AirDrop-LLM Contributors",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/airdrop-llm/airdrop-llm.git"
+  },
+  "homepage": "https://github.com/airdrop-llm/airdrop-llm#readme",
+  "bugs": {
+    "url": "https://github.com/airdrop-llm/airdrop-llm/issues"
+  },
+  "bin": {
+    "airdrop": "./bin/cli.js"
+  },
+  "scripts": {
+    "postinstall": "node scripts/install-binary.js"
+  },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "cpu": [
+    "arm64",
+    "x64"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "bin/",
+    "scripts/",
+    "ui/",
+    "LICENSE",
+    "README.md"
+  ]
+}

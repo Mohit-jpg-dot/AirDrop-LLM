@@ -1,0 +1,65 @@
+[package]
+name = "airdrop-daemon"
+version = "0.1.0"
+edition = "2021"
+authors = ["AirDrop-LLM Contributors"]
+description = "High-performance async P2P inference broker daemon for distributed LLM pipeline parallelism"
+license = "MIT"
+rust-version = "1.75"
+
+[[bin]]
+name = "airdrop-daemon"
+path = "src/main.rs"
+
+[dependencies]
+# Async runtime — multi-threaded work-stealing scheduler with full I/O driver
+tokio = { version = "1", features = ["full"] }
+
+# Structured serialization for network protocol messages and cluster state
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# CLI argument parsing — zero-overhead derive macros
+clap = { version = "4", features = ["derive"] }
+
+# Structured async logging with span-based tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Unique node identifiers for cluster membership
+uuid = { version = "1", features = ["v4"] }
+
+# Lightweight embedded HTTP server for the management UI
+axum = "0.7"
+tower-http = { version = "0.5", features = ["fs", "cors"] }
+
+# System hardware introspection (CPU, memory, GPU enumeration)
+sysinfo = "0.30"
+
+# Byte manipulation for tensor serialization and network wire format
+bytes = "1"
+
+# Time utilities for benchmarking and timeout management
+chrono = { version = "0.4", features = ["serde"] }
+
+# Async-safe channel primitives for inter-task communication
+flume = "0.11"
+
+# Fast LZ4 compression for tensor payload streaming
+lz4_flex = "0.11"
+
+# Stream adapters for SSE event broadcasting
+tokio-stream = "0.1"
+
+# Ergonomic error handling with context propagation
+anyhow = "1"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[profile.dev]
+opt-level = 1
