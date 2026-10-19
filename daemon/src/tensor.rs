@@ -44,6 +44,9 @@ pub const MSG_LAYER_COMMAND: u8 = 0x02;
 pub const MSG_COMPLETION: u8 = 0x03;
 pub const MSG_ERROR: u8 = 0x04;
 pub const MSG_TOKEN_OUTPUT: u8 = 0x05;
+pub const MSG_DELTA_TENSOR: u8 = 0x06;
+pub const MSG_CACHE_INIT: u8 = 0x07;
+pub const MSG_CACHE_ACK: u8 = 0x08;
 
 /// Default llama.cpp server binary name.
 const LLAMACPP_BINARY: &str = "llama-cli";

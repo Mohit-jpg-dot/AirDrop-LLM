@@ -25,6 +25,7 @@ const path = require("path");
 const os = require("os");
 const crypto = require("crypto");
 const dgram = require("dgram");
+const url = require("url");
 const { spawn, execSync } = require("child_process");
 
 // ---------------------------------------------------------------------------
@@ -1160,6 +1161,221 @@ const httpServer = http.createServer((req, res) => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// OpenAI-Compatible Off-Heap Reverse Proxy Server & FIFO Orchestrator (:9995)
+// ---------------------------------------------------------------------------
+
+const OPENAI_PORT = 9995;
+let activeInferenceSlotBusy = false;
+const fifoInferenceQueue = [];
+
+function processFifoQueue() {
+  if (activeInferenceSlotBusy || fifoInferenceQueue.length === 0) return;
+  const task = fifoInferenceQueue.shift();
+  activeInferenceSlotBusy = true;
+  task.execute(() => {
+    activeInferenceSlotBusy = false;
+    setImmediate(processFifoQueue);
+  });
+}
+
+const openAiServer = http.createServer((req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+
+  if (req.method === "OPTIONS") {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
+  const parsedUrl = url.parse(req.url, true);
+
+  // 1. GET /v1/models — Advertises pooled model capability
+  if (parsedUrl.pathname === "/v1/models" && req.method === "GET") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({
+      object: "list",
+      data: [{
+        id: "pooled-large-core",
+        object: "model",
+        created: Math.floor(Date.now() / 1000),
+        owned_by: "airdrop-llm",
+        permission: [],
+        root: "pooled-large-core",
+        parent: null
+      }]
+    }));
+    return;
+  }
+
+  // 2. POST /v1/chat/completions — Intercepts messages & streams SSE deltas
+  if (parsedUrl.pathname === "/v1/chat/completions" && req.method === "POST") {
+    // Automated Load Shedding: reject excess secondary traffic if queue capacity exceeds limit
+    if (fifoInferenceQueue.length >= 16) {
+      res.writeHead(429, {
+        "Content-Type": "application/json",
+        "Retry-After": "5"
+      });
+      res.end(JSON.stringify({
+        error: {
+          message: "Too Many Requests: Network cluster under gridlock. Request shed to protect active session.",
+          type: "load_shedding_rejection",
+          code: "429"
+        }
+      }));
+      return;
+    }
+
+    let body = "";
+    req.on("data", chunk => { body += chunk; });
+    req.on("end", () => {
+      try {
+        const payload = JSON.parse(body || "{}");
+        const messages = payload.messages || [];
+        let promptText = "";
+        for (const m of messages) {
+          promptText += `<|im_start|>${m.role || "user"}\n${(m.content || "").trim()}<|im_end|>\n`;
+        }
+        promptText += "<|im_start|>assistant\n";
+
+        const isStream = Boolean(payload.stream);
+        const maxTokens = payload.max_tokens || 1024;
+        const temp = payload.temperature || 0.7;
+        const reqId = `chatcmpl-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+        const createdTs = Math.floor(Date.now() / 1000);
+
+        if (isStream) {
+          res.writeHead(200, {
+            "Content-Type": "text/event-stream; charset=utf-8",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+          });
+        }
+
+        const task = {
+          id: reqId,
+          execute: (onDone) => {
+            const postData = JSON.stringify({
+              model: activeModelTag || "qwen3.5:9b",
+              prompt: promptText,
+              stream: true,
+              options: {
+                temperature: temp,
+                num_predict: maxTokens,
+                stop: ["<|im_end|>", "<|endoftext|>", "<|im_start|>"]
+              }
+            });
+
+            const ollamaReq = http.request({
+              hostname: "127.0.0.1",
+              port: 11434,
+              path: "/api/generate",
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "Content-Length": Buffer.byteLength(postData)
+              },
+              timeout: 120000
+            }, (ollamaRes) => {
+              let fullOutput = "";
+              ollamaRes.on("data", chunk => {
+                const lines = chunk.toString().split("\n");
+                for (const line of lines) {
+                  if (!line.trim()) continue;
+                  try {
+                    const parsed = JSON.parse(line);
+                    if (parsed.response) {
+                      fullOutput += parsed.response;
+                      if (isStream) {
+                        const chunkData = {
+                          id: reqId,
+                          object: "chat.completion.chunk",
+                          created: createdTs,
+                          model: "pooled-large-core",
+                          choices: [{
+                            index: 0,
+                            delta: { content: parsed.response },
+                            finish_reason: null
+                          }]
+                        };
+                        res.write(`data: ${JSON.stringify(chunkData)}\n\n`);
+                      }
+                    }
+                    if (parsed.done) {
+                      if (isStream) {
+                        const doneChunk = {
+                          id: reqId,
+                          object: "chat.completion.chunk",
+                          created: createdTs,
+                          model: "pooled-large-core",
+                          choices: [{
+                            index: 0,
+                            delta: {},
+                            finish_reason: "stop"
+                          }]
+                        };
+                        res.write(`data: ${JSON.stringify(doneChunk)}\n\n`);
+                        res.write("data: [DONE]\n\n");
+                        res.end();
+                      } else {
+                        res.writeHead(200, { "Content-Type": "application/json" });
+                        res.end(JSON.stringify({
+                          id: reqId,
+                          object: "chat.completion",
+                          created: createdTs,
+                          model: "pooled-large-core",
+                          choices: [{
+                            index: 0,
+                            message: { role: "assistant", content: fullOutput },
+                            finish_reason: "stop"
+                          }],
+                          usage: {
+                            prompt_tokens: promptText.split(/\s+/).length,
+                            completion_tokens: fullOutput.split(/\s+/).length,
+                            total_tokens: (promptText.split(/\s+/).length + fullOutput.split(/\s+/).length)
+                          }
+                        }));
+                      }
+                      onDone();
+                    }
+                  } catch (_) {}
+                }
+              });
+            });
+
+            ollamaReq.on("error", (err) => {
+              if (isStream) {
+                res.write(`data: {"error":"${err.message}"}\n\n`);
+                res.write("data: [DONE]\n\n");
+                res.end();
+              } else {
+                res.writeHead(500, { "Content-Type": "application/json" });
+                res.end(JSON.stringify({ error: { message: err.message, type: "internal_error" } }));
+              }
+              onDone();
+            });
+
+            ollamaReq.write(postData);
+            ollamaReq.end();
+          }
+        };
+
+        fifoInferenceQueue.push(task);
+        processFifoQueue();
+      } catch (err) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: { message: err.message, type: "invalid_request_error" } }));
+      }
+    });
+    return;
+  }
+
+  res.writeHead(404, { "Content-Type": "application/json" });
+  res.end(JSON.stringify({ error: { message: "Endpoint not found", type: "not_found" } }));
+});
+
 function cleanupAndExit() {
   console.log("[airdrop-daemon] Unloading model from memory and closing connections...");
   unloadModelFromMemory(activeModelTag);
@@ -1176,6 +1392,7 @@ function cleanupAndExit() {
 
   try { httpServer.close(); } catch (_) {}
   try { wsHttpServer.close(); } catch (_) {}
+  try { openAiServer.close(); } catch (_) {}
 
   setTimeout(() => {
     process.exit(0);
@@ -1199,6 +1416,11 @@ async function bootDaemon() {
   httpServer.listen(uiPort, "0.0.0.0", () => {
     console.log(`[airdrop-daemon] Valkyrie-HUD HTTP server active at http://localhost:${uiPort}`);
     console.log(`[airdrop-daemon] Active model target: ${activeModelTag} ${activeModelPath ? `(${activeModelPath})` : ""}`);
+  });
+
+  // Start OpenAI-Compatible REST API Gateway (:9995)
+  openAiServer.listen(OPENAI_PORT, "0.0.0.0", () => {
+    console.log(`[airdrop-daemon] OpenAI-compatible reverse proxy listening at http://localhost:${OPENAI_PORT}/v1`);
   });
 
   // Ensure Ollama service is active and preload model into Metal GPU Unified Memory

@@ -29,6 +29,10 @@ mod tensor;
 mod transport;
 mod fallback;
 mod web;
+mod delta;
+mod supervisor;
+mod orchestrator;
+mod gateway;
 
 use clap::Parser;
 use std::sync::Arc;
@@ -160,7 +164,30 @@ async fn run_master(args: Args, state: Arc<RwLock<ClusterState>>) -> anyhow::Res
     });
     info!("Management UI server starting on http://localhost:{}", args.ui_port);
 
-    // --- Subsystem 4: Inference Orchestration Loop ---
+    // --- Subsystem 4: Performance Supervisor & FIFO Task Orchestrator ---
+    let supervisor = supervisor::NetworkSupervisor::new(Arc::clone(&state));
+    let orchestrator = orchestrator::InferenceOrchestrator::new(
+        Arc::clone(&state),
+        Arc::clone(&supervisor),
+    );
+
+    // --- Subsystem 5: OpenAI-Compatible REST API Gateway (:9995) ---
+    let gw_state = Arc::clone(&state);
+    let gw_orch = Arc::clone(&orchestrator);
+    let gateway_handle = tokio::spawn(async move {
+        if let Err(e) = gateway::run_openai_gateway(
+            gateway::OPENAI_GATEWAY_PORT,
+            gw_state,
+            gw_orch,
+        )
+        .await
+        {
+            error!("OpenAI API Gateway failed: {}", e);
+        }
+    });
+    info!("OpenAI REST API Gateway active on http://localhost:{}", gateway::OPENAI_GATEWAY_PORT);
+
+    // --- Subsystem 6: Inference Orchestration Loop ---
     // This runs in the foreground, blocking until shutdown is signaled.
     let orch_state = Arc::clone(&state);
     let orch_handle = tokio::spawn(async move {
@@ -172,6 +199,7 @@ async fn run_master(args: Args, state: Arc<RwLock<ClusterState>>) -> anyhow::Res
         _ = discovery_handle => warn!("Discovery subsystem exited."),
         _ = transport_handle => warn!("Transport subsystem exited."),
         _ = web_handle => warn!("UI server subsystem exited."),
+        _ = gateway_handle => warn!("OpenAI Gateway subsystem exited."),
         _ = orch_handle => warn!("Orchestration subsystem exited."),
         _ = tokio::signal::ctrl_c() => {
             info!("Received shutdown signal. Terminating daemon...");
