@@ -1,6 +1,6 @@
 {
   "name": "airdrop-llm",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Zero-dependency, offline, multi-node pipeline-parallel LLM inference broker. Pool heterogeneous consumer hardware over local networks for distributed model execution.",
   "keywords": [
     "llm",
@@ -20,14 +20,14 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/airdrop-llm/airdrop-llm.git"
+    "url": "git+https://github.com/Mohit-jpg-dot/AirDrop-LLM.git"
   },
-  "homepage": "https://github.com/airdrop-llm/airdrop-llm#readme",
+  "homepage": "https://github.com/Mohit-jpg-dot/AirDrop-LLM#readme",
   "bugs": {
-    "url": "https://github.com/airdrop-llm/airdrop-llm/issues"
+    "url": "https://github.com/Mohit-jpg-dot/AirDrop-LLM/issues"
   },
   "bin": {
-    "airdrop": "./bin/cli.js"
+    "airdrop": "bin/cli.js"
   },
   "scripts": {
     "postinstall": "node scripts/install-binary.js"

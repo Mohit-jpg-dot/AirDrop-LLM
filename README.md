@@ -15,16 +15,17 @@
 
 *Pool heterogeneous consumer laptops over local Wi-Fi into a unified distributed GPU cluster. Run 32B and 70B parameter models with zero cloud dependencies.*
 
-[![Production Ready](https://img.shields.io/badge/Status-IN%20PRODUCTION-00ff66?style=for-the-badge&logo=statuspage&logoColor=black)](https://github.com/airdrop-llm/airdrop-llm)
+[![Production Ready](https://img.shields.io/badge/Status-IN%20PRODUCTION-00ff66?style=for-the-badge&logo=statuspage&logoColor=black)](https://github.com/Mohit-jpg-dot/AirDrop-LLM)
+[![npm version](https://img.shields.io/npm/v/airdrop-llm?style=for-the-badge&logo=npm&color=CB3837)](https://www.npmjs.com/package/airdrop-llm)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
-[![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-blue?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/airdrop-llm/airdrop-llm)
-[![Hardware Backends](https://img.shields.io/badge/Hardware-Apple%20Metal%20%7C%20NVIDIA%20CUDA%20%7C%20CPU-9945ff?style=for-the-badge&logo=nvidia&logoColor=white)](https://github.com/airdrop-llm/airdrop-llm)
-[![Zero Cloud](https://img.shields.io/badge/Privacy-100%25%20Offline%20Air--Gapped-red?style=for-the-badge&logo=shield&logoColor=white)](https://github.com/airdrop-llm/airdrop-llm)
-[![Stars](https://img.shields.io/github/stars/AirDrop-LLM/AirDrop-LLM?style=for-the-badge&logo=github&color=gold)](https://github.com/AirDrop-LLM/AirDrop-LLM/stargazers)
+[![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-blue?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/Mohit-jpg-dot/AirDrop-LLM)
+[![Hardware Backends](https://img.shields.io/badge/Hardware-Apple%20Metal%20%7C%20NVIDIA%20CUDA%20%7C%20CPU-9945ff?style=for-the-badge&logo=nvidia&logoColor=white)](https://github.com/Mohit-jpg-dot/AirDrop-LLM)
+[![Zero Cloud](https://img.shields.io/badge/Privacy-100%25%20Offline%20Air--Gapped-red?style=for-the-badge&logo=shield&logoColor=white)](https://github.com/Mohit-jpg-dot/AirDrop-LLM)
+[![GitHub Stars](https://img.shields.io/github/stars/Mohit-jpg-dot/AirDrop-LLM?style=for-the-badge&logo=github&color=gold)](https://github.com/Mohit-jpg-dot/AirDrop-LLM/stargazers)
 
 <br/>
 
-[**Explore The Architecture**](#-how-it-works) • [**Quickstart Guide**](#-quickstart-guide) • [**Hardware Recommender**](#-hardware-synthesis--model-fit-recommender) • [**Valkyrie HUD**](#-valkyrie-hud-terminal-interface) • [**Roadmap**](#-production-roadmap)
+[**Explore The Architecture**](#-the-vision-why-airdrop-llm) • [**Quickstart Guide**](#-quickstart-guide) • [**Hardware Recommender**](#-hardware-synthesis--model-fit-recommender) • [**Valkyrie HUD**](#-valkyrie-hud-terminal-interface) • [**Roadmap**](#-production-roadmap)
 
 ---
 
@@ -52,7 +53,7 @@ Just like Apple's AirDrop seamlessly discovers nearby devices over Wi-Fi, **AirD
                      └─────────────────────────────────────────────────────────────┘
 ```
 
-> **🟢 CURRENT STATUS: IN ACTIVE PRODUCTION (v0.1.0)**  
+> **🟢 CURRENT STATUS: IN ACTIVE PRODUCTION (v0.1.1)**  
 > AirDrop-LLM is deployed and operational for multi-node local inference. Heterogeneous Metal (macOS) and CUDA (Linux/Windows) pooling is verified with sub-millisecond local network latencies.
 
 ---
@@ -116,15 +117,20 @@ AirDrop-LLM features an embedded retro-futuristic management dashboard running a
 
 ### 1. Installation
 
-Install globally via npm or clone directly from source:
+Install globally via npm:
 
 ```bash
-# Global installation (recommended)
+# Install globally from npm
 npm install -g airdrop-llm
 
-# Or clone from source
-git clone https://github.com/airdrop-llm/airdrop-llm.git
-cd airdrop-llm
+# Or run directly without installing
+npx airdrop-llm --help
+```
+
+*Or clone from source:*
+```bash
+git clone https://github.com/Mohit-jpg-dot/AirDrop-LLM.git
+cd AirDrop-LLM
 npm link
 ```
 
@@ -225,7 +231,7 @@ AirDrop-LLM contains an intelligent hardware synthesis matrix that scales with y
 
 ## 🧭 Production Roadmap
 
-- [x] **v0.1.0 (Production Release)**: Zero-config UDP P2P discovery, multi-node TCP pipeline socket, Metal & CUDA acceleration, Valkyrie-HUD.
+- [x] **v0.1.1 (Production Release)**: Zero-config UDP P2P discovery, multi-node TCP pipeline socket, Metal & CUDA acceleration, Valkyrie-HUD.
 - [ ] **v0.2.0**: Tensor Parallelism (TP) over 10GbE / Thunderbolt Bridge connections for ultra-low latency attention matrix splitting.
 - [ ] **v0.3.0**: Dynamic Layer Auto-Rebalancing (automatically redistributes layers if a laptop's battery drops or thermal throttling occurs).
 - [ ] **v0.4.0**: Cross-platform Mobile Worker Node (`airdrop join` on iPads / Android tablets to contribute 8GB-16GB VRAM to the pool).
@@ -237,7 +243,7 @@ AirDrop-LLM contains an intelligent hardware synthesis matrix that scales with y
 
 We welcome contributions from systems engineers, AI researchers, and distributed computing enthusiasts!
 
-1. Fork the Project (`https://github.com/airdrop-llm/airdrop-llm`)
+1. Fork the Project (`https://github.com/Mohit-jpg-dot/AirDrop-LLM`)
 2. Create your Feature Branch (`git checkout -b feature/tensor-parallelism`)
 3. Commit your Changes (`git commit -m 'Add dynamic tensor slice compression'`)
 4. Push to the Branch (`git push origin feature/tensor-parallelism`)
@@ -251,7 +257,7 @@ If AirDrop-LLM helps you run models you couldn't run before, **please star this 
 
 <div align="center">
 
-[![Star on GitHub](https://img.shields.io/github/stars/airdrop-llm/airdrop-llm?style=social)](https://github.com/airdrop-llm/airdrop-llm)
+[![Star on GitHub](https://img.shields.io/github/stars/Mohit-jpg-dot/AirDrop-LLM?style=social)](https://github.com/Mohit-jpg-dot/AirDrop-LLM)
 
 **Built with ❤️ for sovereign, open-source AI developers worldwide.**
 
