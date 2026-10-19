@@ -58,7 +58,7 @@ Just like Apple's AirDrop seamlessly discovers nearby devices over Wi-Fi, **AirD
                       └─────────────────────────────────────────────────────────────┘
 ```
 
-> **🟢 CURRENT STATUS: IN ACTIVE PRODUCTION (v0.1.1)**  
+> **🟢 CURRENT STATUS: IN ACTIVE PRODUCTION (v0.1.2)**  
 > AirDrop-LLM is deployed and operational for multi-node local inference. Heterogeneous Metal (macOS) and CUDA (Linux/Windows) pooling is verified with sub-millisecond local network latencies and off-heap OpenAI API gateway support.
 
 ---
@@ -428,7 +428,7 @@ AirDrop-LLM contains an intelligent hardware synthesis matrix that scales with y
 ## 🧭 Production Roadmap
 
 - [x] **v0.1.0**: Zero-config UDP P2P discovery (:9998), multi-node TCP pipeline socket (:9999), Metal & CUDA acceleration, Valkyrie-HUD (:3000).
-- [x] **v0.1.1 (Current Production)**: 
+- [x] **v0.1.2 (Current Production)**: 
   - [x] OpenAI-Compatible Off-Heap REST API Gateway (`:9995/v1`) with full SSE streaming.
   - [x] FIFO Multi-Tenant Queue & Atomic GPU Memory Lock.
   - [x] Delta Tensor Serialization & Static Layer Caching (>92% bandwidth reduction).

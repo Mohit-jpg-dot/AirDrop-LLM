@@ -1,6 +1,6 @@
 {
   "name": "airdrop-llm",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Zero-dependency, offline, multi-node pipeline-parallel LLM inference broker. Pool heterogeneous consumer hardware over local networks for distributed model execution.",
   "keywords": [
     "llm",

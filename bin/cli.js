@@ -65,7 +65,7 @@ function err(msg)  { console.error(`${color.red}[airdrop]${color.reset} ${msg}`)
 function printBanner() {
   console.log(`
 ${color.bold}${color.cyan}    ╔═══════════════════════════════════════════════╗
-    ║           AirDrop-LLM  v0.1.0                 ║
+    ║           AirDrop-LLM  v0.1.2                 ║
     ║   Offline Distributed Inference Broker         ║
     ╚═══════════════════════════════════════════════╝${color.reset}
   `);
