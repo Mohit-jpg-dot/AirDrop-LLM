@@ -801,7 +801,7 @@ function handleIncomingClientMessage(msg, socket) {
   if (msg.type === "INFER" || msg.prompt) {
     executeInferencePipeline(
       msg.prompt || "Hello",
-      msg.max_tokens || 512,
+      msg.max_tokens || 4096,
       msg.temperature || 0.7,
       socket,
       msg.request_id,
@@ -858,8 +858,9 @@ function streamFromLocalOllama(prompt, maxTokens, temp, clientSocket, requestId,
     stream: true,
     options: {
       temperature: temp || 0.7,
-      num_predict: Math.max(maxTokens || 1024, 1500),
-      stop: ["<|im_end|>", "<|endoftext|>", "User:", "\nUser:", "\nuser@", "<|im_start|>"],
+      num_predict: Math.max(maxTokens || 4096, 4096),
+      num_ctx: 16384,
+      stop: ["<|im_end|>", "<|endoftext|>", "<|im_start|>"],
     },
   };
   if (Array.isArray(images) && images.length > 0) {
@@ -1163,7 +1164,7 @@ const httpServer = http.createServer((req, res) => {
       try {
         const payload = JSON.parse(body || "{}");
         const prompt = payload.prompt || "Hello cluster";
-        const maxTokens = payload.max_tokens || 512;
+        const maxTokens = payload.max_tokens || 4096;
         const temperature = payload.temperature || 0.7;
         const images = Array.isArray(payload.images) ? payload.images : [];
         const reqId = executeInferencePipeline(prompt, maxTokens, temperature, null, payload.request_id, images);
@@ -1404,7 +1405,7 @@ const openAiServer = http.createServer((req, res) => {
         promptText += "<|im_start|>assistant\n";
 
         const isStream = Boolean(payload.stream);
-        const maxTokens = payload.max_tokens || 1024;
+        const maxTokens = Math.max(payload.max_tokens || 4096, 4096);
         const temp = payload.temperature || 0.7;
         const reqId = `chatcmpl-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
         const createdTs = Math.floor(Date.now() / 1000);
@@ -1427,6 +1428,7 @@ const openAiServer = http.createServer((req, res) => {
               options: {
                 temperature: temp,
                 num_predict: maxTokens,
+                num_ctx: 16384,
                 stop: ["<|im_end|>", "<|endoftext|>", "<|im_start|>"]
               }
             });

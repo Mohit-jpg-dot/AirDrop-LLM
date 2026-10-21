@@ -11,9 +11,18 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=0.1.5">
+    <link rel="stylesheet" href="style.css?v=0.1.6">
 </head>
 <body class="app-body">
+    <!-- ═══════════ DEEP SPACE GALAXY & COSMIC STARFIELD ═══════════ -->
+    <div class="galaxy-container" aria-hidden="true">
+        <canvas id="galaxyCanvas"></canvas>
+        <div class="galaxy-nebula-core"></div>
+        <div class="galaxy-nebula-accent"></div>
+        <div class="galaxy-nebula-cosmic"></div>
+        <div class="galaxy-vignette"></div>
+    </div>
+
     <div class="app-shell">
         <!-- ═══════════ TOP NAVIGATION BAR (x.ai Minimalist Style) ═══════════ -->
         <header class="app-header">
@@ -219,7 +228,7 @@
                     </div>
                     <div class="config-chips-bar">
                         <button class="config-chip model-chip" id="cfgModelChip">Qwen 3.5 9B</button>
-                        <button class="config-chip" id="cfgTokensBtn" title="Click to cycle token limit">512 tokens</button>
+                        <button class="config-chip" id="cfgTokensBtn" title="Click to cycle token limit">4096 tokens</button>
                         <button class="config-chip" id="cfgTempBtn" title="Click to cycle temperature">Temp: 0.7</button>
                         <button class="config-chip engine-chip" id="cfgEngineBtn">Metal GPU</button>
                         <button class="clear-btn" id="clearTerminalBtn" title="Clear conversation">Clear</button>
@@ -275,20 +284,20 @@
 
                             <input type="text" id="terminalInput" class="chat-input-field" placeholder="Ask anything, attach files/images, or run a cluster command..." autocomplete="off" spellcheck="false">
 
-                            <button id="terminalExecuteBtn" class="send-action-button" title="Send (Enter)">
+                            <button id="terminalExecuteBtn" class="send-action-button" title="Send (Enter)" disabled>
                                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                                     <line x1="12" y1="19" x2="12" y2="5"/>
                                     <polyline points="5 12 12 5 19 12"/>
                                 </svg>
                             </button>
                         </div>
-                        <div class="input-footer-hint">
-                            <span>Press <kbd>↵ Enter</kbd> to execute</span>
-                            <span>•</span>
-                            <span>Attach <kbd>+</kbd> image, doc, code</span>
-                            <span>•</span>
-                            <span>Direct Apple Metal GPU Memory Bus</span>
-                        </div>
+                    </div>
+                    <div class="input-footer-hint">
+                        <span>Press <kbd>↵ Enter</kbd> to execute</span>
+                        <span class="hint-dot">•</span>
+                        <span>Attach <kbd>+</kbd> image, doc, code</span>
+                        <span class="hint-dot">•</span>
+                        <span>Direct Apple Metal GPU Memory Bus</span>
                     </div>
                 </div>
             </section>
@@ -325,7 +334,9 @@
         </div>
     </div>
 
-    <script src="src/gateway_listener.js"></script>
-    <script src="app.js?v=0.1.7"></script>
+    <script src="src/gateway_listener.js?v=0.1.0"></script>
+    <script src="src/multimodal_processor.js?v=0.1.0"></script>
+    <script src="src/galaxy_stars.js?v=0.1.0"></script>
+    <script src="app.js?v=0.1.8"></script>
 </body>
 </html>

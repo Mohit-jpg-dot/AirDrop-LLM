@@ -151,7 +151,7 @@ async fn api_infer(
     let request = InferenceRequest {
         id: request_id.clone(),
         prompt: body.prompt,
-        max_tokens: body.max_tokens.unwrap_or(512),
+        max_tokens: body.max_tokens.unwrap_or(4096),
         temperature: body.temperature.unwrap_or(0.7),
         images: body.images,
     };
@@ -412,7 +412,7 @@ const EMBEDDED_UI_HTML: &str = r#"<!DOCTYPE html>
                 const res = await fetch(API + '/api/infer', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ prompt, max_tokens: 512, temperature: 0.7 }),
+                    body: JSON.stringify({ prompt, max_tokens: 4096, temperature: 0.7 }),
                 });
                 const data = await res.json();
                 output.textContent = 'Request queued (ID: ' + data.request_id + '). Waiting for result...';

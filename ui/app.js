@@ -21,7 +21,7 @@ let isExecuting = false;
 let activeStreamLineEl = null;
 
 let inferenceConfig = {
-    tokens: 512,
+    tokens: 4096,
     temp: 0.7,
     engine: "Metal GPU (Zero-Copy)",
 };
@@ -648,9 +648,11 @@ function renderAttachmentPreviews() {
     if (pendingAttachments.length === 0) {
         tray.style.display = "none";
         tray.innerHTML = "";
+        if (typeof window.updateTerminalSendBtn === "function") window.updateTerminalSendBtn();
         return;
     }
 
+    if (typeof window.updateTerminalSendBtn === "function") window.updateTerminalSendBtn();
     tray.style.display = "flex";
     tray.innerHTML = pendingAttachments
         .map((att) => {
@@ -793,16 +795,35 @@ function initTerminalShell() {
         }
     });
 
-    // 5. Execute on Enter
+    // 5. Reactive Send Button State & Execute on Enter
+    function updateTerminalSendBtn() {
+        if (!execBtn) return;
+        if (isExecuting) {
+            execBtn.disabled = true;
+            return;
+        }
+        const hasText = input && input.value.trim().length > 0;
+        const hasAtts = pendingAttachments && pendingAttachments.length > 0;
+        execBtn.disabled = !(hasText || hasAtts);
+    }
+    window.updateTerminalSendBtn = updateTerminalSendBtn;
+
+    input.addEventListener("input", updateTerminalSendBtn);
+    updateTerminalSendBtn();
+
     input.addEventListener("keydown", (e) => {
         if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
-            executeTerminalCommand();
+            if (!execBtn.disabled) {
+                executeTerminalCommand();
+            }
         }
     });
 
     execBtn.addEventListener("click", () => {
-        executeTerminalCommand();
+        if (!execBtn.disabled) {
+            executeTerminalCommand();
+        }
     });
 
     if (clearBtn) {
@@ -831,7 +852,7 @@ function initTerminalShell() {
     const cfgTokens = document.getElementById("cfgTokensBtn");
     if (cfgTokens) {
         cfgTokens.addEventListener("click", () => {
-            const options = [256, 512, 1024, 2048];
+            const options = [1024, 2048, 4096, 8192];
             const next = options[(options.indexOf(inferenceConfig.tokens) + 1) % options.length];
             inferenceConfig.tokens = next;
             cfgTokens.textContent = `${next} tokens`;
@@ -1355,10 +1376,12 @@ async function executeTerminalCommand() {
         }
     }
 
-    if (typeof window.streamInferenceOutputToDashboard === "function") {
-        window.streamInferenceOutputToDashboard({
-            prompt: fullPrompt,
-            targetElement: activeStreamLineEl,
+    // Route through offline Multimodal Processor if attachments exist
+    if (userAttachments.length > 0 && typeof window.processAttachedAssetAndStreamToModel === "function") {
+        window.processAttachedAssetAndStreamToModel({
+            assets: userAttachments,
+            userQuery: commandText,
+            targetElement: null,
             gatewayUrl: "http://localhost:9995/v1/chat/completions",
             maxTokens: inferenceConfig.tokens,
             temperature: inferenceConfig.temp,
@@ -1367,6 +1390,7 @@ async function executeTerminalCommand() {
             },
             onToken: (_delta, accumulated) => {
                 accumulatedStreamText = accumulated;
+                updateClaudeStreamElement(activeStreamLineEl, accumulated);
                 if (!hasFirstTokenArrived) {
                     transitionToStreaming(Math.round(performance.now() - thinkingStartTime));
                 }
@@ -1375,6 +1399,42 @@ async function executeTerminalCommand() {
             },
             onComplete: (accumulated) => {
                 accumulatedStreamText = accumulated;
+                updateClaudeStreamElement(activeStreamLineEl, accumulated);
+                finishExecution();
+            },
+            onError: (err) => {
+                console.warn("[AirDrop] Multimodal processor gateway error, falling back:", err.message);
+                fallbackDispatch();
+            }
+        }).catch((err) => {
+            console.warn("[AirDrop] Multimodal processor catch handler, falling back:", err.message);
+            fallbackDispatch();
+        });
+        return;
+    }
+
+    if (typeof window.streamInferenceOutputToDashboard === "function") {
+        window.streamInferenceOutputToDashboard({
+            prompt: fullPrompt,
+            targetElement: null,
+            gatewayUrl: "http://localhost:9995/v1/chat/completions",
+            maxTokens: inferenceConfig.tokens,
+            temperature: inferenceConfig.temp,
+            onStart: (ttft) => {
+                transitionToStreaming(ttft);
+            },
+            onToken: (_delta, accumulated) => {
+                accumulatedStreamText = accumulated;
+                updateClaudeStreamElement(activeStreamLineEl, accumulated);
+                if (!hasFirstTokenArrived) {
+                    transitionToStreaming(Math.round(performance.now() - thinkingStartTime));
+                }
+                const buffer = document.getElementById("terminalOutputBuffer");
+                if (buffer) buffer.scrollTop = buffer.scrollHeight;
+            },
+            onComplete: (accumulated) => {
+                accumulatedStreamText = accumulated;
+                updateClaudeStreamElement(activeStreamLineEl, accumulated);
                 finishExecution();
             },
             onError: (err) => {
@@ -1415,7 +1475,7 @@ function runSimulatedTokenStream(reqId, userQuery, attachments) {
                 accumulated += (curIndex === 0 ? "" : " ") + words[curIndex];
                 curIndex++;
                 if (activeStreamLineEl) {
-                    activeStreamLineEl.textContent = accumulated;
+                    updateClaudeStreamElement(activeStreamLineEl, accumulated);
                 }
                 const buffer = document.getElementById("terminalOutputBuffer");
                 if (buffer) buffer.scrollTop = buffer.scrollHeight;
@@ -1425,6 +1485,559 @@ function runSimulatedTokenStream(reqId, userQuery, attachments) {
             }
         }, 32);
     }, 450);
+}
+
+// =============================================================================
+// Claude-Style Markdown & Matte-Charcoal Code Pane Renderer (Vanilla Engine)
+// =============================================================================
+
+function copyCodeToClipboard(buttonEl, codeText) {
+    if (!buttonEl) return;
+    const writePromise = (navigator && navigator.clipboard && navigator.clipboard.writeText)
+        ? navigator.clipboard.writeText(codeText)
+        : new Promise((resolve) => {
+            const ta = document.createElement("textarea");
+            ta.value = codeText;
+            ta.style.position = "fixed";
+            ta.style.left = "-999999px";
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand("copy");
+            document.body.removeChild(ta);
+            resolve();
+        });
+
+    writePromise.then(() => {
+        buttonEl.classList.add("copied");
+        buttonEl.innerHTML = `
+            <svg class="copy-icon check-icon" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="#10b981" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+            <span class="copy-label success-text">Copied!</span>
+        `;
+        if (buttonEl._resetTimer) clearTimeout(buttonEl._resetTimer);
+        buttonEl._resetTimer = setTimeout(() => {
+            buttonEl.classList.remove("copied");
+            buttonEl.innerHTML = `
+                <svg class="copy-icon" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                </svg>
+                <span class="copy-label">Copy code</span>
+            `;
+        }, 2000);
+    }).catch((err) => {
+        console.warn("[AirDrop] Copy failed:", err);
+    });
+}
+
+function buildVanillaSandboxSrcDoc(codePayload, language) {
+    const code = typeof codePayload === "string" ? codePayload : String(codePayload || "");
+    const lang = (language || "").toLowerCase().trim();
+
+    if (code.includes("<!DOCTYPE") || code.includes("<html") || code.includes("<HTML")) {
+        return code;
+    }
+
+    if (lang === "svg" || code.trim().startsWith("<svg")) {
+        return `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{margin:0;padding:24px;display:flex;align-items:center;justify-content:center;background:#fff;height:100vh;}svg{max-width:100%;max-height:100%;}</style></head><body>${code}</body></html>`;
+    }
+
+    if (lang === "html" || lang === "htm" || code.trim().startsWith("<")) {
+        return `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><style>body{margin:0;padding:20px;font-family:sans-serif;background:#fff;color:#111;}</style></head><body>${code}</body></html>`;
+    }
+
+    if (lang === "javascript" || lang === "js" || lang === "ts") {
+        return `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{margin:0;padding:20px;font-family:monospace;background:#fff;color:#111;}#out{margin-top:14px;padding:12px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;white-space:pre-wrap;}</style></head><body><div id="app"></div><div id="root"></div><div style="font-weight:600;font-size:12px;color:#64748b;">Console Output:</div><div id="out"></div><script>const out=document.getElementById("out");function log(m){const d=document.createElement("div");d.textContent=typeof m==="object"?JSON.stringify(m,null,2):String(m);out.appendChild(d);}const oL=console.log;console.log=function(...a){log(a.join(" "));oL.apply(console,a);};try{${code}}catch(e){console.log("Error: "+e.message);}<\/script></body></html>`;
+    }
+
+    return `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{margin:0;padding:20px;font-family:sans-serif;background:#fff;color:#111;}pre{background:#f8fafc;padding:16px;border-radius:6px;border:1px solid #e2e8f0;font-family:monospace;white-space:pre-wrap;}</style></head><body><pre>${code.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</pre></body></html>`;
+}
+
+let activeArtifactState = { isOpen: false, code: "", lang: "", tab: "preview" };
+
+function closeVanillaArtifactCanvas() {
+    activeArtifactState.isOpen = false;
+    const overlay = document.getElementById("claudeArtifactOverlay");
+    const backdrop = document.getElementById("claudeArtifactBackdrop");
+    if (overlay) overlay.classList.remove("open");
+    if (backdrop) backdrop.classList.remove("open");
+}
+
+function openVanillaArtifactCanvas(code, language) {
+    activeArtifactState.code = code;
+    activeArtifactState.lang = language || "plaintext";
+    activeArtifactState.isOpen = true;
+
+    const langLower = (language || "").toLowerCase();
+    activeArtifactState.tab = ["html", "svg", "htm", "jsx", "tsx", "js", "css"].includes(langLower) ? "preview" : "code";
+
+    let backdrop = document.getElementById("claudeArtifactBackdrop");
+    if (!backdrop) {
+        backdrop = document.createElement("div");
+        backdrop.id = "claudeArtifactBackdrop";
+        backdrop.className = "claude-artifact-backdrop";
+        backdrop.onclick = closeVanillaArtifactCanvas;
+        document.body.appendChild(backdrop);
+    }
+
+    let overlay = document.getElementById("claudeArtifactOverlay");
+    if (!overlay) {
+        overlay = document.createElement("aside");
+        overlay.id = "claudeArtifactOverlay";
+        overlay.className = "claude-artifact-container";
+        document.body.appendChild(overlay);
+
+        window.addEventListener("keydown", (e) => {
+            if (e.key === "Escape" && activeArtifactState.isOpen) {
+                closeVanillaArtifactCanvas();
+            }
+        });
+    }
+
+    renderVanillaArtifactOverlay(overlay);
+    requestAnimationFrame(() => {
+        backdrop.classList.add("open");
+        overlay.classList.add("open");
+    });
+}
+
+function renderVanillaArtifactOverlay(overlay) {
+    const { code, lang, tab } = activeArtifactState;
+    const displayLang = (lang || "PLAINTEXT").toUpperCase();
+    const srcDoc = buildVanillaSandboxSrcDoc(code, lang);
+
+    overlay.innerHTML = `
+        <header class="claude-artifact-header">
+            <div class="claude-artifact-header-left">
+                <div class="artifact-pill-badge">
+                    <svg class="artifact-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                        <line x1="9" y1="3" x2="9" y2="21"/>
+                    </svg>
+                    <span class="artifact-title">Artifact Canvas</span>
+                </div>
+                <span class="artifact-lang-tag">${escapeHtml(displayLang)}</span>
+                <div class="claude-artifact-tabs">
+                    <button type="button" class="artifact-tab-btn ${tab === 'code' ? 'active' : ''}" id="vTabCodeBtn">
+                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+                        <span>Code</span>
+                    </button>
+                    <button type="button" class="artifact-tab-btn ${tab === 'preview' ? 'active' : ''}" id="vTabPreviewBtn">
+                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                        <span>Preview</span>
+                    </button>
+                </div>
+            </div>
+            <div class="claude-artifact-header-right">
+                <button type="button" class="artifact-ctrl-btn" id="vCopyArtifactBtn">
+                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                    <span>Copy</span>
+                </button>
+                <button type="button" class="artifact-ctrl-btn icon-only" id="vFullscreenBtn" title="Toggle Fullscreen">
+                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+                </button>
+                <button type="button" class="artifact-close-btn" onclick="closeVanillaArtifactCanvas()" title="Close (Esc)">
+                    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+            </div>
+        </header>
+        <div class="claude-artifact-body">
+            <div class="claude-artifact-code-panel" id="vCodePanel" style="display: ${tab === 'code' ? 'block' : 'none'};">
+                <pre class="claude-artifact-pre"><code class="claude-artifact-code whitespace-pre-wrap">${escapeHtml(code)}</code></pre>
+            </div>
+            <div class="claude-artifact-preview-panel bg-white" id="vPreviewPanel" style="display: ${tab === 'preview' ? 'flex' : 'none'};">
+                <iframe title="Artifact Sandbox" sandbox="allow-scripts" class="claude-artifact-iframe" id="vIframe"></iframe>
+            </div>
+        </div>
+    `;
+
+    // Bind tab toggles
+    const tabCodeBtn = document.getElementById("vTabCodeBtn");
+    const tabPrevBtn = document.getElementById("vTabPreviewBtn");
+    const codePanel = document.getElementById("vCodePanel");
+    const prevPanel = document.getElementById("vPreviewPanel");
+    const iframe = document.getElementById("vIframe");
+
+    if (iframe && tab === "preview") {
+        iframe.srcdoc = srcDoc;
+    }
+
+    if (tabCodeBtn) {
+        tabCodeBtn.onclick = () => {
+            activeArtifactState.tab = "code";
+            tabCodeBtn.classList.add("active");
+            tabPrevBtn.classList.remove("active");
+            codePanel.style.display = "block";
+            prevPanel.style.display = "none";
+        };
+    }
+
+    if (tabPrevBtn) {
+        tabPrevBtn.onclick = () => {
+            activeArtifactState.tab = "preview";
+            tabPrevBtn.classList.add("active");
+            tabCodeBtn.classList.remove("active");
+            codePanel.style.display = "none";
+            prevPanel.style.display = "flex";
+            if (iframe) iframe.srcdoc = srcDoc;
+        };
+    }
+
+    const copyBtn = document.getElementById("vCopyArtifactBtn");
+    if (copyBtn) {
+        copyBtn.onclick = () => {
+            copyCodeToClipboard(copyBtn, code);
+        };
+    }
+
+    const fsBtn = document.getElementById("vFullscreenBtn");
+    if (fsBtn) {
+        fsBtn.onclick = () => {
+            overlay.classList.toggle("fullscreen");
+        };
+    }
+}
+
+function colorizeCodeSyntaxNatively(rawCode, language = "plaintext") {
+    if (!rawCode) return "";
+    const code = typeof rawCode === "string" ? rawCode : String(rawCode || "");
+    const lang = (language || "plaintext").toLowerCase().trim();
+
+    function esc(s) {
+        return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+    }
+
+    if (lang === "plaintext" || lang === "text" || !lang) {
+        return esc(code);
+    }
+
+    const lines = code.split("\n");
+    return lines.map((line) => {
+        if (!line || !line.trim()) return esc(line);
+        const placeholders = [];
+        let p = line;
+
+        if (lang === "python" || lang === "py" || lang === "bash" || lang === "sh" || lang === "shell" || lang === "zsh") {
+            p = p.replace(/(#.*$)/, (m) => {
+                const id = `___C${placeholders.length}___`;
+                placeholders.push({ id, html: `<span class="claude-code-comment text-gray-500 italic">${esc(m)}</span>` });
+                return id;
+            });
+        } else if (lang === "html" || lang === "xml" || lang === "htm") {
+            p = p.replace(/(<!--.*?-->)/g, (m) => {
+                const id = `___C${placeholders.length}___`;
+                placeholders.push({ id, html: `<span class="claude-code-comment text-gray-500 italic">${esc(m)}</span>` });
+                return id;
+            });
+        } else {
+            p = p.replace(/(\/\/.*$|\/\*.*?\*\/)/g, (m) => {
+                const id = `___C${placeholders.length}___`;
+                placeholders.push({ id, html: `<span class="claude-code-comment text-gray-500 italic">${esc(m)}</span>` });
+                return id;
+            });
+        }
+
+        if (lang === "python" || lang === "py") {
+            p = p.replace(/("""[\s\S]*?"""|'''[\s\S]*?'''|"[^"\\]*(?:\\.[^"\\]*)*"|'[^'\\]*(?:\\.[^'\\]*)*')/g, (m) => {
+                const id = `___S${placeholders.length}___`;
+                placeholders.push({ id, html: `<span class="claude-code-str text-[#50fa7b] text-emerald-400">${esc(m)}</span>` });
+                return id;
+            });
+        } else {
+            p = p.replace(/("[^"\\]*(?:\\.[^"\\]*)*"|'[^'\\]*(?:\\.[^'\\]*)*'|`[^`\\]*(?:\\.[^`\\]*)*`)/g, (m) => {
+                const id = `___S${placeholders.length}___`;
+                placeholders.push({ id, html: `<span class="claude-code-str text-[#50fa7b] text-emerald-400">${esc(m)}</span>` });
+                return id;
+            });
+        }
+
+        p = esc(p);
+
+        if (lang === "rust" || lang === "rs") {
+            p = p.replace(/\b(fn|let|mut|if|else|for|while|loop|match|return|break|continue|struct|enum|impl|trait|type|pub|mod|use|as|crate|super|self|Self|unsafe|async|await|where|move|ref|dyn)\b/g, `<span class="claude-code-kw text-[#ff79c6] text-amber-400 font-semibold">$1</span>`);
+            p = p.replace(/\b(bool|char|str|String|usize|u8|u16|u32|u64|u128|i8|i16|i32|i64|i128|f32|f64|Option|Result|Some|None|Ok|Err|Vec|Box|Arc|Rc|Mutex|Cell|RefCell)\b/g, `<span class="claude-code-type text-cyan-400">$1</span>`);
+            p = p.replace(/\b(\d+(\.\d+)?(_?\w*)?)\b/g, `<span class="claude-code-num text-orange-400">$1</span>`);
+            p = p.replace(/\b([a-zA-Z_]\w*)\s*(?=\()/g, `<span class="claude-code-fn text-sky-300">$1</span>`);
+        } else if (lang === "python" || lang === "py") {
+            p = p.replace(/\b(def|class|return|if|elif|else|for|while|break|continue|pass|import|from|as|try|except|finally|raise|with|async|await|lambda|yield|global|nonlocal|assert|in|is|not|and|or)\b/g, `<span class="claude-code-kw text-[#ff79c6] text-amber-400 font-semibold">$1</span>`);
+            p = p.replace(/\b(True|False|None|self|cls|int|float|str|bool|list|dict|set|tuple|bytes|range|enumerate|zip|map|filter|print|len|open|super|type|object)\b/g, `<span class="claude-code-type text-cyan-400">$1</span>`);
+            p = p.replace(/(@[a-zA-Z_]\w*)/g, `<span class="claude-code-type text-cyan-400">$1</span>`);
+            p = p.replace(/\b(\d+(\.\d+)?)\b/g, `<span class="claude-code-num text-orange-400">$1</span>`);
+            p = p.replace(/\b([a-zA-Z_]\w*)\s*(?=\()/g, `<span class="claude-code-fn text-sky-300">$1</span>`);
+        } else if (lang === "javascript" || lang === "js" || lang === "jsx" || lang === "typescript" || lang === "ts" || lang === "tsx") {
+            p = p.replace(/\b(function|return|const|let|var|if|else|for|while|do|switch|case|break|continue|default|class|extends|import|export|from|as|new|this|typeof|instanceof|try|catch|finally|throw|async|await|yield)\b/g, `<span class="claude-code-kw text-[#ff79c6] text-amber-400 font-semibold">$1</span>`);
+            p = p.replace(/\b(true|false|null|undefined|NaN|Infinity|boolean|string|number|any|void|never|unknown|Promise|Array|Object|Map|Set|Symbol|RegExp|Error)\b/g, `<span class="claude-code-type text-cyan-400">$1</span>`);
+            p = p.replace(/\b(\d+(\.\d+)?)\b/g, `<span class="claude-code-num text-orange-400">$1</span>`);
+            p = p.replace(/\b([a-zA-Z_]\w*)\s*(?=\()/g, `<span class="claude-code-fn text-sky-300">$1</span>`);
+        } else if (lang === "html" || lang === "xml" || lang === "htm") {
+            p = p.replace(/&lt;(\/?[a-zA-Z0-9_-]+)/g, `<span class="claude-code-kw text-[#ff79c6] text-amber-400">&lt;$1</span>`);
+            p = p.replace(/(\/?&gt;)/g, `<span class="claude-code-kw text-[#ff79c6] text-amber-400">$1</span>`);
+            p = p.replace(/\b([a-zA-Z0-9_:-]+)=/g, `<span class="claude-code-type text-cyan-400">$1</span>=`);
+        } else if (lang === "css" || lang === "scss") {
+            p = p.replace(/\b([a-zA-Z0-9_-]+)\s*:/g, `<span class="claude-code-type text-cyan-400">$1</span>:`);
+            p = p.replace(/\b(\d+(\.\d+)?(px|rem|em|%|vh|vw|s|ms|deg|fr)?)\b/g, `<span class="claude-code-num text-orange-400">$1</span>`);
+            p = p.replace(/(#[0-9a-fA-F]{3,8})\b/g, `<span class="claude-code-num text-orange-400">$1</span>`);
+        } else if (lang === "bash" || lang === "sh" || lang === "shell" || lang === "zsh") {
+            p = p.replace(/\b(if|then|else|elif|fi|case|esac|for|while|until|do|done|in|function|select|echo|exit|export|source|alias|cd|ls|cat|grep|mkdir|rm|chmod|chown)\b/g, `<span class="claude-code-kw text-[#ff79c6] text-amber-400 font-semibold">$1</span>`);
+            p = p.replace(/(\$[A-Za-z_0-9]+|\$\{[^}]+\})/g, `<span class="claude-code-type text-cyan-400">$1</span>`);
+            p = p.replace(/(--?[a-zA-Z0-9_-]+)/g, `<span class="claude-code-type text-cyan-400">$1</span>`);
+            p = p.replace(/\b(\d+)\b/g, `<span class="claude-code-num text-orange-400">$1</span>`);
+        } else {
+            p = p.replace(/\b(\d+(\.\d+)?)\b/g, `<span class="claude-code-num text-orange-400">$1</span>`);
+            p = p.replace(/\b([a-zA-Z_]\w*)\s*(?=\()/g, `<span class="claude-code-fn text-sky-300">$1</span>`);
+        }
+
+        for (let i = 0; i < placeholders.length; i++) {
+            p = p.replace(placeholders[i].id, placeholders[i].html);
+        }
+        return p;
+    }).join("\n");
+}
+
+function renderVanillaCleanTypography(text) {
+    const container = document.createElement("div");
+    container.className = "claude-narrative-block font-sans text-xs text-gray-300 leading-6 space-y-1";
+    const lines = text.split("\n");
+
+    lines.forEach((rawLine, lineIdx) => {
+        const trimmed = rawLine.trim();
+        if (!trimmed) {
+            if (lineIdx < lines.length - 1) {
+                const empty = document.createElement("div");
+                empty.className = "claude-narrative-empty-line";
+                container.appendChild(empty);
+            }
+            return;
+        }
+
+        function appendInlineTokens(targetEl, lineText) {
+            const inlineRegex = /(`[^`]+`|\*\*[\s\(\S\)]*?\*\*)/g;
+            let lastIdx = 0;
+            let match;
+
+            while ((match = inlineRegex.exec(lineText)) !== null) {
+                if (match.index > lastIdx) {
+                    targetEl.appendChild(document.createTextNode(lineText.slice(lastIdx, match.index)));
+                }
+                const tok = match[0];
+                if (tok.startsWith("`") && tok.endsWith("`")) {
+                    const c = document.createElement("code");
+                    c.className = "claude-inline-code";
+                    c.textContent = tok.slice(1, -1);
+                    targetEl.appendChild(c);
+                } else if (tok.startsWith("**") && tok.endsWith("**")) {
+                    const b = document.createElement("strong");
+                    b.className = "font-bold text-cyan-300 claude-bold-highlight";
+                    b.textContent = tok.slice(2, -2);
+                    targetEl.appendChild(b);
+                }
+                lastIdx = inlineRegex.lastIndex;
+            }
+            if (lastIdx < lineText.length) {
+                targetEl.appendChild(document.createTextNode(lineText.slice(lastIdx)));
+            }
+        }
+
+        if (rawLine.startsWith("### ")) {
+            const h4 = document.createElement("h4");
+            h4.className = "text-sm font-bold text-cyan-400 mt-4 mb-2 claude-heading-h4 tracking-tight";
+            appendInlineTokens(h4, rawLine.slice(4).trim());
+            container.appendChild(h4);
+            return;
+        }
+
+        if (rawLine.startsWith("## ")) {
+            const h3 = document.createElement("h3");
+            h3.className = "text-base font-extrabold text-white mt-5 mb-2 claude-heading-h3 tracking-tight";
+            appendInlineTokens(h3, rawLine.slice(3).trim());
+            container.appendChild(h3);
+            return;
+        }
+
+        if (rawLine.startsWith("# ")) {
+            const h2 = document.createElement("h2");
+            h2.className = "text-lg font-extrabold uppercase text-white mt-6 mb-2 tracking-wide claude-heading-h2";
+            appendInlineTokens(h2, rawLine.slice(2).trim());
+            container.appendChild(h2);
+            return;
+        }
+
+        if (rawLine.startsWith("- ") || rawLine.startsWith("* ")) {
+            const item = document.createElement("div");
+            item.className = "claude-list-item grid grid-cols-[16px_1fr] items-start gap-1 my-0.5 text-xs text-gray-300 leading-6";
+            const b = document.createElement("span");
+            b.className = "claude-bullet text-cyan-400 font-bold select-none text-center";
+            b.textContent = "•";
+            const c = document.createElement("div");
+            c.className = "claude-list-content";
+            appendInlineTokens(c, rawLine.slice(2).trim());
+            item.appendChild(b);
+            item.appendChild(c);
+            container.appendChild(item);
+            return;
+        }
+
+        const numM = rawLine.match(/^(\d+)\.\s+(.*)$/);
+        if (numM) {
+            const item = document.createElement("div");
+            item.className = "claude-list-item grid grid-cols-[18px_1fr] items-start gap-1 my-0.5 text-xs text-gray-300 leading-6";
+            const b = document.createElement("span");
+            b.className = "claude-bullet-num text-cyan-400 font-mono text-[11px] font-semibold select-none";
+            b.textContent = numM[1] + ".";
+            const c = document.createElement("div");
+            c.className = "claude-list-content";
+            appendInlineTokens(c, numM[2].trim());
+            item.appendChild(b);
+            item.appendChild(c);
+            container.appendChild(item);
+            return;
+        }
+
+        const p = document.createElement("p");
+        p.className = "claude-narrative-paragraph text-xs text-gray-300 leading-6 m-0";
+        appendInlineTokens(p, rawLine);
+        container.appendChild(p);
+    });
+
+    return container;
+}
+
+function updateClaudeStreamElement(containerEl, rawText) {
+    if (!containerEl) return;
+    const text = typeof rawText === "string" ? rawText : String(rawText || "");
+
+    // Fast path: if no code block backticks, render clean narrative typography directly
+    if (!text.includes("```")) {
+        containerEl.replaceChildren(renderVanillaCleanTypography(text));
+        return;
+    }
+
+    // Segment standard narrative text fields from structured markdown code blocks
+    // Non-blocking boundary scanner: /```(\w*)\n([\s\S]*?)```/g
+    const codeBlockRegex = /```(\w*)\n([\s\S]*?)```/g;
+    let lastIndex = 0;
+    let match;
+    const segments = [];
+
+    while ((match = codeBlockRegex.exec(text)) !== null) {
+        if (match.index > lastIndex) {
+            segments.push({ type: "narrative", content: text.slice(lastIndex, match.index) });
+        }
+        segments.push({
+            type: "code",
+            language: (match[1] || "plaintext").trim().toUpperCase(),
+            code: match[2],
+            isStreaming: false
+        });
+        lastIndex = codeBlockRegex.lastIndex;
+    }
+
+    if (lastIndex < text.length) {
+        const remaining = text.slice(lastIndex);
+        const unclosedMatch = remaining.match(/```(\w*)\n([\s\S]*)$/);
+        if (unclosedMatch) {
+            if (unclosedMatch.index > 0) {
+                segments.push({ type: "narrative", content: remaining.slice(0, unclosedMatch.index) });
+            }
+            segments.push({
+                type: "code",
+                language: (unclosedMatch[1] || "plaintext").trim().toUpperCase(),
+                code: unclosedMatch[2],
+                isStreaming: true
+            });
+        } else {
+            segments.push({ type: "narrative", content: remaining });
+        }
+    }
+
+    // High-speed DOM fragment rendering
+    const fragment = document.createDocumentFragment();
+
+    segments.forEach((seg) => {
+        if (seg.type === "narrative") {
+            fragment.appendChild(renderVanillaCleanTypography(seg.content));
+        } else if (seg.type === "code") {
+            const codeCard = document.createElement("div");
+            codeCard.className = "claude-code-container";
+            codeCard.setAttribute("data-language", seg.language);
+
+            // Structural Header Strip: #1e1e1e with uppercase tracked typography & copy anchor
+            const headerStrip = document.createElement("div");
+            headerStrip.className = "claude-code-header";
+
+            const langSpan = document.createElement("span");
+            langSpan.className = "claude-code-lang";
+            langSpan.textContent = seg.language || "PLAINTEXT";
+
+            const actionsWrap = document.createElement("div");
+            actionsWrap.className = "claude-code-actions";
+
+            const artifactBtn = document.createElement("button");
+            artifactBtn.type = "button";
+            artifactBtn.className = "claude-artifact-open-btn";
+            artifactBtn.innerHTML = `
+                <svg class="artifact-link-icon" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+                    <polyline points="15 3 21 3 21 9"></polyline>
+                    <line x1="10" y1="14" x2="21" y2="3"></line>
+                </svg>
+                <span>Open Artifact ↗</span>
+            `;
+            const codeText = seg.code;
+            const langText = seg.language;
+            artifactBtn.onclick = (e) => {
+                e.stopPropagation();
+                openVanillaArtifactCanvas(codeText, langText);
+            };
+
+            const copyBtn = document.createElement("button");
+            copyBtn.type = "button";
+            copyBtn.className = "claude-code-copy-btn";
+            copyBtn.innerHTML = `
+                <svg class="copy-icon" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                </svg>
+                <span class="copy-label">Copy code</span>
+            `;
+            copyBtn.onclick = (e) => {
+                e.stopPropagation();
+                copyCodeToClipboard(copyBtn, codeText);
+            };
+
+            actionsWrap.appendChild(artifactBtn);
+            actionsWrap.appendChild(copyBtn);
+
+            headerStrip.appendChild(langSpan);
+            headerStrip.appendChild(actionsWrap);
+
+            // Zero-allocation pre-formatted code body
+            const bodyDiv = document.createElement("div");
+            bodyDiv.className = "claude-code-body";
+
+            const preEl = document.createElement("pre");
+            preEl.className = "claude-code-pre";
+
+            const codeEl = document.createElement("code");
+            codeEl.className = "claude-code-content whitespace-pre";
+            codeEl.innerHTML = colorizeCodeSyntaxNatively(seg.code, seg.language);
+
+            preEl.appendChild(codeEl);
+            if (seg.isStreaming) {
+                const cursor = document.createElement("span");
+                cursor.className = "claude-streaming-cursor";
+                preEl.appendChild(cursor);
+            }
+            bodyDiv.appendChild(preEl);
+
+            codeCard.appendChild(headerStrip);
+            codeCard.appendChild(bodyDiv);
+            fragment.appendChild(codeCard);
+        }
+    });
+
+    containerEl.replaceChildren(fragment);
 }
 
 
@@ -1582,7 +2195,7 @@ function handleTokenStreamPacket(packet) {
         } else {
             accumulatedStreamText += chunk;
         }
-        activeStreamLineEl.textContent = accumulatedStreamText;
+        updateClaudeStreamElement(activeStreamLineEl, accumulatedStreamText);
     }
 
     if (packet.done) {
@@ -1616,7 +2229,7 @@ function pollResult(reqId) {
                     transitionToStreaming(ttft);
                 }
                 accumulatedStreamText = data.output;
-                activeStreamLineEl.textContent = data.output;
+                updateClaudeStreamElement(activeStreamLineEl, data.output);
                 const buffer = document.getElementById("terminalOutputBuffer");
                 if (buffer) buffer.scrollTop = buffer.scrollHeight;
             }
@@ -1656,7 +2269,7 @@ function finishExecution() {
     if (activeStreamLineEl) {
         const currentText = (activeStreamLineEl.textContent || "").trim();
         if (!currentText && accumulatedThoughts && accumulatedThoughts.trim().length > 0) {
-            activeStreamLineEl.textContent = accumulatedThoughts.trim();
+            updateClaudeStreamElement(activeStreamLineEl, accumulatedThoughts.trim());
         }
     }
 
@@ -1677,8 +2290,12 @@ function finishExecution() {
     activeThinkingIndicatorEl = null;
     activeAvatarWrapEl = null;
 
-    const execBtn = document.getElementById("terminalExecuteBtn");
-    if (execBtn) execBtn.disabled = false;
+    if (typeof window.updateTerminalSendBtn === "function") {
+        window.updateTerminalSendBtn();
+    } else {
+        const execBtn = document.getElementById("terminalExecuteBtn");
+        if (execBtn) execBtn.disabled = false;
+    }
 
     const input = document.getElementById("terminalInput");
     if (input) input.focus();

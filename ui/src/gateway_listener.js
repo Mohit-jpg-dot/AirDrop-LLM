@@ -72,7 +72,7 @@
      * @param {HTMLElement|string} [config.targetElement] - DOM container element or CSS selector to render text into.
      * @param {string} [config.gatewayUrl] - Endpoint URL (default: http://localhost:9995/v1/chat/completions).
      * @param {string} [config.model] - Model tag identifier (default: pooled-large-core).
-     * @param {number} [config.maxTokens] - Max generation tokens (default: 512).
+     * @param {number} [config.maxTokens] - Max generation tokens (default: 4096).
      * @param {number} [config.temperature] - Generation temperature (default: 0.7).
      * @param {Function} [config.onStart] - Callback fired upon receiving HTTP 200 headers (arg: ttftMs).
      * @param {Function} [config.onToken] - Callback fired on every incoming token chunk (args: tokenText, fullAccumulatedText).
@@ -86,7 +86,7 @@
             targetElement,
             gatewayUrl = DEFAULT_GATEWAY_URL,
             model = DEFAULT_MODEL_ID,
-            maxTokens = 512,
+            maxTokens = 4096,
             temperature = 0.7,
             onStart = null,
             onToken = null,
@@ -132,7 +132,7 @@
             model: model,
             messages: messagesPayload,
             stream: true, // Force Axum gateway SSE data-path
-            max_tokens: Number(maxTokens) || 512,
+            max_tokens: Number(maxTokens) || 4096,
             temperature: Number(temperature) || 0.7,
         };
 
