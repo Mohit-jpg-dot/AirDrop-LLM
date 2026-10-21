@@ -132,6 +132,8 @@ struct InferRequest {
     prompt: String,
     max_tokens: Option<u32>,
     temperature: Option<f32>,
+    #[serde(default)]
+    images: Option<Vec<String>>,
 }
 
 #[derive(Serialize)]
@@ -151,6 +153,7 @@ async fn api_infer(
         prompt: body.prompt,
         max_tokens: body.max_tokens.unwrap_or(512),
         temperature: body.temperature.unwrap_or(0.7),
+        images: body.images,
     };
 
     {

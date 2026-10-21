@@ -280,6 +280,7 @@ impl InferenceOrchestrator {
             prompt: task.prompt.clone(),
             max_tokens: task.max_tokens,
             temperature: task.temperature,
+            images: None,
         };
 
         // Check if supervisor mandates local standalone execution to bypass network jitter

@@ -183,6 +183,10 @@ pub struct InferenceRequest {
 
     /// Sampling temperature (0.0 = deterministic, 1.0+ = creative).
     pub temperature: f32,
+
+    /// Optional base64-encoded image payloads for multimodal inference.
+    #[serde(default)]
+    pub images: Option<Vec<String>>,
 }
 
 // ---------------------------------------------------------------------------

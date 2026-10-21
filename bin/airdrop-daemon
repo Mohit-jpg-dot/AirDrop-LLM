@@ -804,12 +804,13 @@ function handleIncomingClientMessage(msg, socket) {
       msg.max_tokens || 512,
       msg.temperature || 0.7,
       socket,
-      msg.request_id
+      msg.request_id,
+      msg.images || []
     );
   }
 }
 
-function executeInferencePipeline(prompt, maxTokens, temp, clientSocket, existingReqId) {
+function executeInferencePipeline(prompt, maxTokens, temp, clientSocket, existingReqId, images = []) {
   const requestId = existingReqId || `req-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
   inferenceActive = true;
 
@@ -817,6 +818,7 @@ function executeInferencePipeline(prompt, maxTokens, temp, clientSocket, existin
     request_id: requestId,
     status: "processing",
     prompt,
+    images: images || [],
     output: "",
     created_at: Date.now(),
   });
@@ -825,7 +827,8 @@ function executeInferencePipeline(prompt, maxTokens, temp, clientSocket, existin
   const peerList = Array.from(connectedPeers.values());
   const hasPeers = peerList.length > 0;
 
-  broadcastLog(`[INFO] [INFER] Dispatching prompt: "${prompt.slice(0, 48)}${prompt.length > 48 ? "..." : ""}"`);
+  const hasImages = Array.isArray(images) && images.length > 0;
+  broadcastLog(`[INFO] [INFER] Dispatching prompt: "${prompt.slice(0, 48)}${prompt.length > 48 ? "..." : ""}"${hasImages ? ` (+${images.length} image attachment)` : ""}`);
 
   if (hasPeers) {
     const peer = peerList[0];
@@ -840,7 +843,7 @@ function executeInferencePipeline(prompt, maxTokens, temp, clientSocket, existin
     if (!ollamaOk) {
       executeFallbackSimulation(prompt, maxTokens, temp, clientSocket, requestId);
     }
-  });
+  }, images);
 
   return requestId;
 }
@@ -848,8 +851,8 @@ function executeInferencePipeline(prompt, maxTokens, temp, clientSocket, existin
 /**
  * Streams directly from local Ollama model runner on 127.0.0.1:11434
  */
-function streamFromLocalOllama(prompt, maxTokens, temp, clientSocket, requestId, callback) {
-  const postData = JSON.stringify({
+function streamFromLocalOllama(prompt, maxTokens, temp, clientSocket, requestId, callback, images = []) {
+  const reqPayload = {
     model: activeModelTag || "qwen3.5:9b",
     prompt: prompt,
     stream: true,
@@ -858,7 +861,11 @@ function streamFromLocalOllama(prompt, maxTokens, temp, clientSocket, requestId,
       num_predict: Math.max(maxTokens || 1024, 1500),
       stop: ["<|im_end|>", "<|endoftext|>", "User:", "\nUser:", "\nuser@", "<|im_start|>"],
     },
-  });
+  };
+  if (Array.isArray(images) && images.length > 0) {
+    reqPayload.images = images;
+  }
+  const postData = JSON.stringify(reqPayload);
 
   function doRequest(retryOnFail = true) {
     const req = http.request(
@@ -887,12 +894,27 @@ function streamFromLocalOllama(prompt, maxTokens, temp, clientSocket, requestId,
         }
 
         let fullText = "";
+        let thoughtText = "";
         res.on("data", (chunk) => {
           const lines = chunk.toString().split("\n");
           for (const line of lines) {
             if (!line.trim()) continue;
             try {
               const parsed = JSON.parse(line);
+              if (parsed.thinking) {
+                thoughtText += parsed.thinking;
+                const thinkPacket = {
+                  type: "THINKING_STREAM",
+                  request_id: requestId,
+                  thinking_chunk: parsed.thinking,
+                };
+                const frame = makeWsTextFrame(JSON.stringify(thinkPacket));
+                if (clientSocket && wsClients.has(clientSocket)) {
+                  try { clientSocket.write(frame); } catch (_) {}
+                } else {
+                  for (const c of wsClients) { try { c.write(frame); } catch (_) {} }
+                }
+              }
               // Only emit actual response tokens, ignore internal thinking tokens
               if (parsed.response) {
                 fullText += parsed.response;
@@ -915,6 +937,9 @@ function streamFromLocalOllama(prompt, maxTokens, temp, clientSocket, requestId,
                 }
               }
               if (parsed.done) {
+                if (!fullText && thoughtText) {
+                  fullText = thoughtText;
+                }
                 const reqObj = inferenceRequests.get(requestId);
                 if (reqObj) {
                   reqObj.output = fullText;
@@ -1024,7 +1049,7 @@ function executeFallbackSimulation(prompt, maxTokens, temp, clientSocket, reques
 // HTTP UI & REST API Server (Port 3000)
 // ---------------------------------------------------------------------------
 
-const UI_DIR = path.resolve(__dirname, "..", "ui");
+const UI_DIR = process.env.AIRDROP_UI_DIR || path.resolve(__dirname, "..", "ui");
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -1140,7 +1165,8 @@ const httpServer = http.createServer((req, res) => {
         const prompt = payload.prompt || "Hello cluster";
         const maxTokens = payload.max_tokens || 512;
         const temperature = payload.temperature || 0.7;
-        const reqId = executeInferencePipeline(prompt, maxTokens, temperature);
+        const images = Array.isArray(payload.images) ? payload.images : [];
+        const reqId = executeInferencePipeline(prompt, maxTokens, temperature, null, payload.request_id, images);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ request_id: reqId, status: "queued" }));
       } catch (e) {
@@ -1290,6 +1316,9 @@ const httpServer = http.createServer((req, res) => {
 
     const ext = path.extname(filePath).toLowerCase();
     const contentType = MIME_TYPES[ext] || "application/octet-stream";
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
     res.writeHead(200, { "Content-Type": contentType });
     res.end(content);
   });

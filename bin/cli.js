@@ -375,13 +375,17 @@ function spawnDaemon(mode, flags) {
 
   const logFd = fs.openSync(logFile, "a");
 
+  const cwdUiDir = path.resolve(process.cwd(), "ui");
+  const pkgUiDir = path.resolve(__dirname, "..", "ui");
+  const resolvedUiDir = fs.existsSync(path.join(cwdUiDir, "index.html")) ? cwdUiDir : pkgUiDir;
+
   const child = spawn(BINARY_PATH, daemonArgs, {
     detached: true,
     stdio: ["ignore", logFd, logFd],
     env: {
       ...process.env,
       AIRDROP_LOG_FILE: logFile,
-      AIRDROP_UI_DIR: path.resolve(__dirname, "..", "ui"),
+      AIRDROP_UI_DIR: resolvedUiDir,
     },
   });
 

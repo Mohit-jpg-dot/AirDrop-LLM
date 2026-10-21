@@ -42,12 +42,15 @@ use tracing::{error, info, warn};
 // ---------------------------------------------------------------------------
 
 use crate::engine::arena::DoubleBufferedArena;
+use crate::engine::prefill::KVCacheContextSupervisor;
 
 pub struct AsymmetricPipelineSupervisor {
     /// Contiguous unswappable off-heap layer memory buffer.
     off_heap_buffer: Arc<RwLock<OffHeapWeightBuffer>>,
     /// Double-buffered memory arena (Arena A & Arena B).
     arena: Option<Arc<DoubleBufferedArena>>,
+    /// Stateful lock-free KV-cache context supervisor.
+    kv_supervisor: Option<Arc<KVCacheContextSupervisor>>,
     /// Shared cluster registry state.
     cluster_state: Arc<RwLock<ClusterState>>,
     /// Panic event receiver piped from the network watchdog.
@@ -65,6 +68,7 @@ impl AsymmetricPipelineSupervisor {
         Self {
             off_heap_buffer,
             arena: None,
+            kv_supervisor: None,
             cluster_state,
             panic_rx,
             is_degraded: Arc::new(AtomicBool::new(false)),
@@ -80,10 +84,32 @@ impl AsymmetricPipelineSupervisor {
         Self {
             off_heap_buffer,
             arena: Some(arena),
+            kv_supervisor: None,
             cluster_state,
             panic_rx,
             is_degraded: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    pub fn new_with_kv_cache(
+        off_heap_buffer: Arc<RwLock<OffHeapWeightBuffer>>,
+        arena: Option<Arc<DoubleBufferedArena>>,
+        kv_supervisor: Arc<KVCacheContextSupervisor>,
+        cluster_state: Arc<RwLock<ClusterState>>,
+        panic_rx: broadcast::Receiver<NetworkConnectivityPanic>,
+    ) -> Self {
+        Self {
+            off_heap_buffer,
+            arena,
+            kv_supervisor: Some(kv_supervisor),
+            cluster_state,
+            panic_rx,
+            is_degraded: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    pub fn attach_kv_cache(&mut self, kv_supervisor: Arc<KVCacheContextSupervisor>) {
+        self.kv_supervisor = Some(kv_supervisor);
     }
 
     /// Evaluates a single inference pass or token step with active watchdog interception.
@@ -176,6 +202,12 @@ impl AsymmetricPipelineSupervisor {
         if let Some(ref arena) = self.arena {
             arena.purge_all();
             info!("[SUPERVISOR] Double-buffered memory arena (Arenas A & B) purged to FREE state.");
+        }
+
+        // 1c. Clear and unpin Stateful KV-Cache Context Supervisor if attached
+        if let Some(ref kv_sup) = self.kv_supervisor {
+            kv_sup.clear_pinned_cache().await;
+            info!("[SUPERVISOR] Stateful KV-cache context supervisor flushed, unpinned, and zero-wiped.");
         }
 
         // 2. Update cluster state telemetry
