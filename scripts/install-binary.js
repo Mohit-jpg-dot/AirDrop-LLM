@@ -41,8 +41,8 @@ const streamPipeline = promisify(pipeline);
 // ---------------------------------------------------------------------------
 
 /** GitHub repository coordinates for release artifact resolution. */
-const GITHUB_OWNER = "airdrop-llm";
-const GITHUB_REPO = "airdrop-llm";
+const GITHUB_OWNER = "Mohit-jpg-dot";
+const GITHUB_REPO = "AirDrop-LLM";
 
 /** Package version — sourced from package.json to lock binary/CLI parity. */
 const PACKAGE_VERSION = require("../package.json").version;

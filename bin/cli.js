@@ -68,7 +68,7 @@ function err(msg)  { console.error(`${color.red}[airdrop]${color.reset} ${msg}`)
 function printBanner() {
   console.log(`
 ${color.bold}${color.cyan}    ╔═══════════════════════════════════════════════╗
-    ║           AirDrop-LLM  v0.1.2                 ║
+    ║           AirDrop-LLM  v0.1.3                 ║
     ║   Offline Distributed Inference Broker         ║
     ╚═══════════════════════════════════════════════╝${color.reset}
   `);
@@ -640,7 +640,7 @@ function downloadFileWithResume(fileUrl, destinationPath, label = "Downloading")
 
       const client = parsed.protocol === "https:" ? https : http;
       const headers = {
-        "User-Agent": "AirDrop-LLM/0.1.2 (+https://github.com/Mohit-jpg-dot/AirDrop-LLM)",
+        "User-Agent": "AirDrop-LLM/0.1.3 (+https://github.com/Mohit-jpg-dot/AirDrop-LLM)",
       };
 
       if (existingBytes > 0) {

@@ -58,7 +58,7 @@ Just like Apple's AirDrop seamlessly discovers nearby devices over Wi-Fi, **AirD
                       └─────────────────────────────────────────────────────────────┘
 ```
 
-> **🟢 CURRENT STATUS: IN ACTIVE PRODUCTION (v0.1.2)**  
+> **🟢 CURRENT STATUS: IN ACTIVE PRODUCTION (v0.1.3)**  
 > AirDrop-LLM is deployed and operational for multi-node local inference. Heterogeneous Metal (macOS) and CUDA (Linux/Windows) pooling is verified with sub-millisecond local network latencies and off-heap OpenAI API gateway support.
 
 ---
