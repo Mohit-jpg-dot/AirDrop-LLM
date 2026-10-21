@@ -25,7 +25,7 @@
 
 <br/>
 
-[**The Vision**](#-the-vision-why-airdrop-llm) • [**Quickstart Guide**](#-quickstart-guide) • [**Model Pull & AirDrop Sync**](#-two-tier-model-lifecycle--p2p-airdrop-sync) • [**OpenAI API Gateway (:9995)**](#-openai-compatible-off-heap-gateway-9995) • [**Double-Buffered Arena**](#-zero-copy-double-buffered-memory-arena) • [**Kernel Watchdog**](#-bare-metal-os-kernel-tcp-telemetry-watchdog) • [**Valkyrie HUD**](#-valkyrie-hud-terminal-interface)
+[**The Vision**](#-the-vision-why-airdrop-llm) • [**Quickstart Guide**](#-quickstart-guide) • [**Speculative Engine**](#-continuous-batching--kv-cache-speculative-splitting) • [**Hardware Protection & Firewall**](#-physical-hardware-protection--air-gapped-firewall) • [**Model Pull & AirDrop Sync**](#-two-tier-model-lifecycle--p2p-airdrop-sync) • [**OpenAI API Gateway (:9995)**](#-openai-compatible-off-heap-gateway-9995) • [**Double-Buffered Arena**](#-zero-copy-double-buffered-memory-arena) • [**Kernel Watchdog**](#-bare-metal-os-kernel-tcp-telemetry-watchdog) • [**Valkyrie HUD**](#-valkyrie-hud-terminal-interface)
 
 ---
 
@@ -66,6 +66,10 @@ Just like Apple's AirDrop seamlessly discovers nearby devices over Wi-Fi, **AirD
 ## ✨ Enterprise Capabilities
 
 * 🔌 **OpenAI-Compatible Off-Heap Gateway (`:9995`)**: Built-in high-performance reverse proxy exposing standard `/v1/models` and `/v1/chat/completions` (supporting Server-Sent Events `stream: true` and blocking modes). Works drop-in with **Cursor, Aider, Continue.dev, OpenHands, and LangChain**.
+* 🛡️ **Physical Hardware Protection & Battery Safeguards (`src/engine/guard.rs`)**: 250ms thermal monitoring with an **88°C critical safety ceiling** that triggers emergency memory drops to let silicon cool down. Proactive DC battery discharge detection downscales concurrency by 50% to prevent lithium-ion cell bloating and wear.
+* 🔒 **Air-Gapped Network Firewall & Buffer Overflow Shield (`src/engine/guard.rs`)**: Restricts control services strictly to loopback (`127.0.0.1`) and authenticated peers. Enforces atomic byte-length bounds (capped at 32MB) with automatic IP blacklisting on overflow attempts to defeat remote heap corruption exploits. Disables shell escapes entirely.
+* ⚡ **Anti-Thrashing Control Shield (Schmitt-Trigger Hysteresis)**: Dual-threshold thermal boundary matrix (Shed at 85°C, Recover at 70°C) with an atomic 5-minute (300-second) cooldown timer, preventing layer redistribution ping-pong oscillations.
+* ⚡ **Continuous Batching & KV-Cache Speculative Splitting (`src/engine/speculative.rs`)**: Eliminates pipeline bubbles over Wi-Fi. While the cluster head waits for remote verification, a local `DraftGenerator` (backed by the local 1.1GB anchor model) speculatively drafts up to 4 future tokens (`Gamma = 4`). The worker verifies all 4 candidates in a single batched GEMM forward pass, scaling token throughput up to 4x. Features an atomic `speculative_commit_or_rollback` validation gate.
 * 🌐 **Zero-Config P2P Discovery (UDP Broadcast `:9998`)**: Zero manual IP configuration required. Run `airdrop join` on any machine connected to the same Wi-Fi. Nodes automatically beacon, handshake, and register compute backends.
 * ⚡ **Delta Tensor Serialization & Static Layer Caching (>92% Bandwidth Reduction)**: Static transformer weights are initialized and cached into peer RAM once (`MSG_CACHE_INIT: 0x04`). Only compressed activation deltas (`MSG_DELTA_TENSOR: 0x06`) are streamed over raw TCP sockets on port `9999` using high-speed **LZ4**, dropping network traffic from megabytes to kilobytes per token!
 * 🧠 **Zero-Copy Double-Buffered Memory Arena (`src/engine/arena.rs`)**: Allocates two contiguous physical RAM blocks (Arena A and Arena B) aligned strictly to 64-byte boundaries for Apple Metal SIMD and AVX-512 vector registers. Pinned in physical memory via POSIX `mlock` to eliminate page faults. Managed by an atomic 4-state lock-free machine (`FREE`, `STREAMING`, `READY`, `COMPUTE`) enabling concurrent layer pre-fetching during forward passes.
@@ -319,6 +323,92 @@ AirDrop-LLM solves this with a **Zero-Copy Double-Buffered Memory Arena** (`src/
 * **POSIX `mlock` Pinning:** Direct kernel syscall via `libc::mlock` guarantees memory pages remain locked in physical RAM, completely preventing OS virtual memory page faults.
 * **Lock-Free Atomic State Machine:** State transitions (`FREE: 0x00` ➔ `STREAMING: 0x01` ➔ `READY: 0x02` ➔ `COMPUTE: 0x03`) operate via `AtomicU8` with `Ordering::SeqCst` semantics, eliminating mutex contention.
 * **RAII `ComputeGuard`:** When the compute block finishes, the guard safely auto-resets the arena state back to `FREE`, while `Drop` releases pinned pages via `libc::munlock`.
+
+---
+
+## ⚡ Continuous Batching & KV-Cache Speculative Splitting
+
+In standard pipeline parallelism across local Wi-Fi, sequential token dependencies cause **pipeline bubbles** where the primary node sits idle waiting for the worker GPU to verify and return tokens.
+
+AirDrop-LLM eliminates pipeline bubbles with an **Asynchronous Continuous Batching and Speculative Splitting Engine** (`src/engine/speculative.rs`):
+
+```
+       PRIMARY NODE (MacBook Air M5)                                    WORKER NODE (Lenovo Legion RTX 4070)
+  ┌──────────────────────────────────────────────┐                ┌──────────────────────────────────────────────┐
+  │ Local Anchor Model (Qwen 2.5 Coder 1.5B)     │                │ Flagship Model (Qwen 2.5 32B Coder)          │
+  │ Resident in Local Host RAM                   │                │ Resident in High-Speed GPU VRAM              │
+  └──────────────────────┬───────────────────────┘                └──────────────────────┬───────────────────────┘
+                         │                                                               │
+                         ▼ [Speculative Window: Gamma = 4]                               │
+  ┌──────────────────────────────────────────────┐                                       │
+  │ DraftGenerator Task (Tokio Loop)             │                                       │
+  │ Drafts 4 candidate tokens ahead:             │                                       │
+  │ [Token 1, Token 2, Token 3, Token 4]         │                                       │
+  └──────────────────────┬───────────────────────┘                                       │
+                         │                                                               │
+                         ▼ Asymmetric Bundle Protocol: speculative_batch_compress        │
+  ┌──────────────────────────────────────────────┐                                       │
+  │ Single Unified Wire Transmission             │ ════════════════════════════════════► │
+  │ LZ4 compressed activations over Port 9999    │                                       ▼
+  └──────────────────────────────────────────────┘                        ┌──────────────────────────────────────────────┐
+                                                                          │ Batched Verification Matrix Forward Pass     │
+                                                                          │ Single GEMM step evaluates all 4 tokens      │
+                                                                          │ concurrently against active KV-Cache         │
+                                                                          └──────────────────────┬───────────────────────┘
+                                                                                                 │
+                                 Verification Outcome Report (:9999)                             │
+       ◄─────────────────────────────────────────────────────────────────────────────────────────┘
+       │
+       ▼
+  ┌──────────────────────────────────────────────────────────────────────────────────────┐
+  │ SPECULATIVE COMMIT-OR-ROLLBACK VALIDATION GATE                                       │
+  │                                                                                      │
+  │ • Match (Full/Partial Acceptance):                                                   │
+  │     Commits all verified tokens directly to output SSE queue (up to 4x speedup!)     │
+  │                                                                                      │
+  │ • Divergence (Token mismatch at index k):                                            │
+  │     1. Drops mismatched suffix elements instantly                                    │
+  │     2. Executes O(1) atomic KV-cache rollback to index k via pointer reset           │
+  │     3. Commits flagship verified correction token with 0 bytes leaked and 0 UI stall  │
+```
+
+---
+
+## 🛡️ Physical Hardware Protection & Air-Gapped Firewall
+
+Running distributed matrix operations over consumer devices requires kernel-level safeguards to eliminate physical silicon degradation, battery swelling, and remote network code injection vulnerabilities over public Wi-Fi.
+
+AirDrop-LLM embeds a centralized infrastructure protection system: **`HardwareWatchdogGuard`** (`src/engine/guard.rs`):
+
+```
+ ┌────────────────────────────────────────────────────────────────────────────────────────┐
+ │ HARDWARE WATCHDOG GUARD (src/engine/guard.rs)                                          │
+ ├────────────────────────────────────────────────────────────────────────────────────────┤
+ │ 1. CRITICAL TEMPERATURE INTERCEPT (88.0°C HARD CEILING)                                │
+ │    • Thermal sensors sampled every 250ms                                               │
+ │    • If ANY node reaches 88°C: bypasses queues, triggers EMERGENCY HALT,               │
+ │      unmaps/drops all weights from RAM, and allows silicon to cool immediately.        │
+ ├────────────────────────────────────────────────────────────────────────────────────────┤
+ │ 2. BATTERY CELL STRESS MITIGATION GATE                                                 │
+ │    • Telemetry detects DC battery discharge mode (unplugged from AC wall power)        │
+ │    • Automatically downscales sequence concurrency by 50% to prevent high-amp draw     │
+ │      and irreversible lithium-ion cell degradation / bloating.                         │
+ ├────────────────────────────────────────────────────────────────────────────────────────┤
+ │ 3. ANTI-THRASHING CONTROL SHIELD (SCHMITT-TRIGGER HYSTERESIS)                          │
+ │    • Upper Shedding Threshold: 85°C (cuts concurrency, sheds workload)                 │
+ │    • Lower Recovery Gate: 70°C (cool zone)                                             │
+ │    • Exponential Backoff Lock: 5-minute (300-second) cooldown timer locks state,       │
+ │      stopping ping-pong reallocation oscillations.                                     │
+ ├────────────────────────────────────────────────────────────────────────────────────────┤
+ │ 4. AIR-GAPPED NETWORK FIREWALL & BOUNDARY SANITIZER                                    │
+ │    • Loopback & Whitelist Enforcement: Control ports bind strictly to 127.0.0.1        │
+ │      or cryptographically authenticated peer IPs from the UDP discovery beacon.        │
+ │    • Atomic Packet Size Bounds: Max 32MB frame ceiling checked BEFORE memory allocation.│
+ │      Buffer overflow attempts trigger immediate connection sever & IP blacklist.       │
+ │    • Secure Deserialization: Restricts payloads to binary float arrays; shell escapes  │
+ │      and command execution strings (/bin/sh, cmd.exe, $(), etc.) are disabled.        │
+ └────────────────────────────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
