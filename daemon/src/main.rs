@@ -33,6 +33,8 @@ mod delta;
 mod supervisor;
 mod orchestrator;
 mod gateway;
+pub mod engine;
+pub mod network;
 
 use clap::Parser;
 use std::sync::Arc;

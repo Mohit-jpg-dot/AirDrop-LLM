@@ -54,6 +54,12 @@ tokio-stream = "0.1"
 # Ergonomic error handling with context propagation
 anyhow = "1"
 
+# Raw OS memory management (mlock, munlock for off-heap buffer pinning)
+libc = "0.2"
+
+# Low-level socket options (native OS kernel TCP Keepalive & setsockopt)
+socket2 = { version = "0.5", features = ["all"] }
+
 [profile.release]
 opt-level = 3
 lto = "fat"

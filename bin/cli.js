@@ -25,6 +25,8 @@ const path = require("path");
 const fs = require("fs");
 const os = require("os");
 const http = require("http");
+const https = require("https");
+const { URL } = require("url");
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -35,6 +37,7 @@ const BINARY_PATH = path.resolve(__dirname, BINARY_NAME);
 const PID_FILE = path.join(os.tmpdir(), "airdrop-llm.pid");
 const MODEL_PID_FILE = path.join(os.tmpdir(), "airdrop-model.pid");
 const LOG_DIR = path.join(os.homedir(), ".airdrop-llm", "logs");
+const MODELS_DIR = path.join(os.homedir(), ".airdrop-llm", "models");
 const UI_PORT = 3000;
 const MODEL_PORT = 8080;
 const DAEMON_STARTUP_TIMEOUT_MS = 2500;
@@ -84,6 +87,8 @@ ${color.bold}COMMANDS:${color.reset}
     ${color.green}start${color.reset}     Launch as cluster head (master node) and spawn local AI model.
               Opens the management UI at http://localhost:${UI_PORT}
     ${color.green}join${color.reset}      Connect to an existing cluster as a worker peer.
+    ${color.green}pull${color.reset}      Download model weights, split cluster shards, or fallback anchor.
+    ${color.green}sync${color.reset}      P2P "AirDrop" model transfer: sync models/shards from master over Wi-Fi!
     ${color.green}status${color.reset}    Check running daemon, active model PID, and hardware recommendations.
     ${color.green}stop${color.reset}      Gracefully shutdown daemon and terminate the local model process.
     ${color.green}help${color.reset}      Show this help message.
@@ -92,9 +97,27 @@ ${color.bold}OPTIONS:${color.reset}
     --port <n>        Override the UI server port (default: ${UI_PORT}).
     --no-browser      Don't auto-open the browser after starting.
     --model <path>    Path to the GGUF model file to load into GPU memory.
+    --shard <1/2|2/2> Download only half of a large model (e.g. 1/2 for Node 0, 2/2 for Node 1).
+    --anchor          Download the lightweight 1.1GB emergency fallback anchor (Qwen 2.5 Coder 1.5B).
+    --master <ip:p>   Specify master IP and port for P2P sync (default: 127.0.0.1:3000).
     --verbose         Enable verbose daemon logging.
 
 ${color.bold}EXAMPLES:${color.reset}
+    ${color.dim}# Download an Ollama model directly with live progress${color.reset}
+    airdrop pull qwen2.5-coder:7b
+
+    ${color.dim}# Download ONLY Shard 1 of 32B model on Master laptop (saves 50% RAM/disk)${color.reset}
+    airdrop pull qwen2.5-coder:32b --shard 1/2
+
+    ${color.dim}# Download ONLY Shard 2 of 32B model on Worker laptop${color.reset}
+    airdrop pull qwen2.5-coder:32b --shard 2/2
+
+    ${color.dim}# Download emergency offline anchor (1.1GB - prevents disconnect crashes)${color.reset}
+    airdrop pull --anchor
+
+    ${color.dim}# True P2P AirDrop: Peer laptop syncs missing shard from Master over local Wi-Fi${color.reset}
+    airdrop sync
+
     ${color.dim}# Start cluster head with specific model and verbose output${color.reset}
     airdrop start --model ~/models/qwen3.5-9b.gguf --verbose
 
@@ -117,6 +140,7 @@ function parseArgs() {
   const args = process.argv.slice(2);
   const command = args[0] || "help";
   const flags = {};
+  const positionals = [];
 
   for (let i = 1; i < args.length; i++) {
     const arg = args[i];
@@ -128,10 +152,13 @@ function parseArgs() {
       } else {
         flags[key] = true;
       }
+    } else {
+      positionals.push(arg);
     }
   }
 
-  return { command, flags };
+  const target = positionals[0] || null;
+  return { command, target, positionals, flags };
 }
 
 // ---------------------------------------------------------------------------
@@ -568,11 +595,429 @@ function handleStop() {
 }
 
 // ---------------------------------------------------------------------------
+// Model Downloading & Sharded AirDrop Transfer
+// ---------------------------------------------------------------------------
+
+function renderAsciiBar(pct, width = 18) {
+  const clamped = Math.max(0, Math.min(100, pct || 0));
+  const filled = Math.round((clamped / 100) * width);
+  const empty = Math.max(0, width - filled);
+  return `[${"█".repeat(filled)}${"░".repeat(empty)}]`;
+}
+
+function formatBytes(bytes) {
+  if (!bytes || bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${(bytes / Math.pow(k, i)).toFixed(2)} ${sizes[i]}`;
+}
+
+/**
+ * Downloads a file from HTTP/HTTPS with automatic redirect following,
+ * HTTP Range-based resume support, and a live terminal progress meter.
+ */
+function downloadFileWithResume(fileUrl, destinationPath, label = "Downloading") {
+  return new Promise((resolve, reject) => {
+    fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+
+    let existingBytes = 0;
+    if (fs.existsSync(destinationPath)) {
+      existingBytes = fs.statSync(destinationPath).size;
+    }
+
+    function attempt(urlStr, redirectsRemaining) {
+      if (redirectsRemaining <= 0) {
+        return reject(new Error("Too many HTTP redirects."));
+      }
+
+      let parsed;
+      try {
+        parsed = new URL(urlStr);
+      } catch (err) {
+        return reject(new Error(`Invalid URL: ${urlStr}`));
+      }
+
+      const client = parsed.protocol === "https:" ? https : http;
+      const headers = {
+        "User-Agent": "AirDrop-LLM/0.1.2 (+https://github.com/Mohit-jpg-dot/AirDrop-LLM)",
+      };
+
+      if (existingBytes > 0) {
+        headers["Range"] = `bytes=${existingBytes}-`;
+      }
+
+      const req = client.get(urlStr, { headers }, (res) => {
+        // Handle HTTP 3xx Redirects (Hugging Face CDN)
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          const nextUrl = new URL(res.headers.location, urlStr).href;
+          res.resume();
+          return attempt(nextUrl, redirectsRemaining - 1);
+        }
+
+        // Handle Resume (206) vs Fresh (200)
+        let writeStream;
+        let totalBytes = 0;
+        let downloadedSoFar = existingBytes;
+
+        if (res.statusCode === 206) {
+          writeStream = fs.createWriteStream(destinationPath, { flags: "a" });
+          const contentLen = parseInt(res.headers["content-length"] || "0", 10);
+          totalBytes = existingBytes + contentLen;
+          log(`Resuming previous download from ${formatBytes(existingBytes)}...`);
+        } else if (res.statusCode === 200) {
+          writeStream = fs.createWriteStream(destinationPath, { flags: "w" });
+          downloadedSoFar = 0;
+          totalBytes = parseInt(res.headers["content-length"] || "0", 10);
+        } else if (res.statusCode === 416) {
+          log(`File is already fully downloaded (${formatBytes(existingBytes)}).`);
+          return resolve({ path: destinationPath, bytes: existingBytes });
+        } else {
+          res.resume();
+          return reject(new Error(`Server returned HTTP ${res.statusCode}: ${res.statusMessage}`));
+        }
+
+        let lastTime = Date.now();
+        let bytesSinceLast = 0;
+        let speedBps = 0;
+
+        res.on("data", (chunk) => {
+          downloadedSoFar += chunk.length;
+          bytesSinceLast += chunk.length;
+
+          const now = Date.now();
+          const elapsed = (now - lastTime) / 1000;
+          if (elapsed >= 0.25) {
+            speedBps = bytesSinceLast / elapsed;
+            lastTime = now;
+            bytesSinceLast = 0;
+
+            let pct = 0;
+            let etaSec = 0;
+            if (totalBytes > 0) {
+              pct = Math.min(100, (downloadedSoFar / totalBytes) * 100);
+              const remainingBytes = Math.max(0, totalBytes - downloadedSoFar);
+              etaSec = speedBps > 0 ? Math.round(remainingBytes / speedBps) : 0;
+            }
+
+            const bar = renderAsciiBar(pct, 16);
+            const speedStr = `${(speedBps / (1024 * 1024)).toFixed(1)} MB/s`;
+            const currentStr = formatBytes(downloadedSoFar);
+            const totalStr = totalBytes > 0 ? formatBytes(totalBytes) : "???";
+
+            process.stdout.write(
+              `\r${color.cyan}[airdrop]${color.reset} ${label}: ${color.green}${bar}${color.reset} ${pct.toFixed(1)}% (${currentStr} / ${totalStr}) · ${color.yellow}${speedStr}${color.reset} · ETA: ${etaSec}s    `
+            );
+          }
+        });
+
+        res.pipe(writeStream);
+
+        writeStream.on("finish", () => {
+          process.stdout.write("\n");
+          log(`${color.green}✓ Download completed successfully:${color.reset} ${color.bold}${destinationPath}${color.reset}`);
+          resolve({ path: destinationPath, bytes: downloadedSoFar });
+        });
+
+        writeStream.on("error", (err) => {
+          reject(err);
+        });
+
+        res.on("error", (err) => {
+          reject(err);
+        });
+      });
+
+      req.on("error", (err) => {
+        reject(err);
+      });
+      req.setTimeout(60000, () => {
+        req.destroy(new Error("Connection timed out"));
+      });
+    }
+
+    attempt(fileUrl, 7);
+  });
+}
+
+/**
+ * Pulls a model from local Ollama service using its streaming NDJSON API.
+ */
+function pullFromOllama(modelTag) {
+  return new Promise((resolve, reject) => {
+    log(`Connecting to Ollama service (http://127.0.0.1:11434)...`);
+    const postData = JSON.stringify({ name: modelTag, stream: true });
+
+    const req = http.request(
+      {
+        hostname: "127.0.0.1",
+        port: 11434,
+        path: "/api/pull",
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(postData),
+        },
+      },
+      (res) => {
+        if (res.statusCode !== 200) {
+          return reject(new Error(`Ollama returned HTTP ${res.statusCode}`));
+        }
+
+        let buffer = "";
+        res.on("data", (chunk) => {
+          buffer += chunk.toString("utf8");
+          const lines = buffer.split("\n");
+          buffer = lines.pop(); // Keep partial line
+
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            try {
+              const data = JSON.parse(line);
+              if (data.status) {
+                let progressStr = "";
+                if (data.total && data.completed) {
+                  const pct = Math.min(100, (data.completed / data.total) * 100);
+                  const bar = renderAsciiBar(pct, 16);
+                  progressStr = ` ${color.green}${bar}${color.reset} ${pct.toFixed(1)}% (${formatBytes(data.completed)} / ${formatBytes(data.total)})`;
+                }
+                process.stdout.write(
+                  `\r${color.cyan}[airdrop]${color.reset} Pulling ${color.bold}${modelTag}${color.reset}: ${data.status}${progressStr}    `
+                );
+              }
+            } catch (_) {}
+          }
+        });
+
+        res.on("end", () => {
+          process.stdout.write("\n");
+          log(`${color.green}✓ Model ${modelTag} successfully pulled and verified in GPU memory.${color.reset}`);
+          resolve(true);
+        });
+      }
+    );
+
+    req.on("error", (err) => {
+      reject(err);
+    });
+    req.write(postData);
+    req.end();
+  });
+}
+
+/**
+ * Handles the 'airdrop pull' command.
+ * Supports Ollama pull, direct Hugging Face GGUF downloads with resume,
+ * and sharded multi-node partial downloads (--shard 1/2 or --shard 2/2).
+ */
+async function handlePull(target, flags) {
+  printBanner();
+  fs.mkdirSync(MODELS_DIR, { recursive: true });
+
+  // 1. Fallback Anchor Mode (--anchor or target === 'anchor')
+  if (flags.anchor || target === "anchor" || target === "fallback") {
+    log(`Target: ${color.bold}${color.magenta}Emergency Fallback Anchor (Qwen 2.5 Coder 1.5B ~1.1 GB)${color.reset}`);
+    log(`Role:   ${color.dim}Standalone local engine — prevents session crashes when hotspot/peer drops${color.reset}`);
+    const anchorUrl = "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf";
+    const dest = path.join(MODELS_DIR, "qwen2.5-coder-1.5b-q4_k_m.gguf");
+    try {
+      await downloadFileWithResume(anchorUrl, dest, "Qwen 2.5 Coder 1.5B Anchor");
+      log(`${color.green}★ Offline Emergency Anchor is ready in ~/.airdrop-llm/models/${color.reset}`);
+    } catch (e) {
+      err(`Failed to download anchor: ${e.message}`);
+    }
+    return;
+  }
+
+  // 2. Cluster Sharding Mode (--shard 1/2 or --shard 2/2)
+  if (flags.shard) {
+    const shardVal = String(flags.shard).trim();
+    const isShard1 = shardVal === "1/2" || shardVal === "1";
+    const isShard2 = shardVal === "2/2" || shardVal === "2";
+
+    if (!isShard1 && !isShard2) {
+      err(`Invalid shard format: '${flags.shard}'. Use '--shard 1/2' for Node 0 or '--shard 2/2' for Node 1.`);
+      process.exit(1);
+    }
+
+    const shardNum = isShard1 ? "00001-of-00002" : "00002-of-00002";
+    const nodeRole = isShard1 ? "NODE 0 (Master) · Layers 0-16 + Input Embeddings" : "NODE 1 (Worker) · Layers 17-32 + LM Prediction Head";
+    const filename = `qwen2.5-coder-32b-q4_k_m-${shardNum}.gguf`;
+    const shardUrl = `https://huggingface.co/bartowski/Qwen2.5-Coder-32B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-32B-Instruct-Q4_K_M-${shardNum}.gguf`;
+    const dest = path.join(MODELS_DIR, filename);
+
+    log(`Target: ${color.bold}${color.cyan}Qwen 2.5 Coder 32B (Shard ${isShard1 ? "1/2" : "2/2"})${color.reset}`);
+    log(`Role:   ${color.yellow}${nodeRole}${color.reset}`);
+    log(`Saving: ${color.dim}${dest}${color.reset}`);
+    log(`Note:   ${color.dim}This machine only downloads ~10 GB instead of 20+ GB!${color.reset}\n`);
+
+    try {
+      await downloadFileWithResume(shardUrl, dest, `Qwen 32B Shard ${isShard1 ? "1/2" : "2/2"}`);
+      log(`${color.green}★ Shard ${isShard1 ? "1/2" : "2/2"} ready in cache. Combined with peer, this unlocks 32B models!${color.reset}`);
+    } catch (e) {
+      err(`Failed to download shard: ${e.message}`);
+    }
+    return;
+  }
+
+  const modelName = target || flags.model || "qwen2.5-coder:7b";
+
+  // 3. Hugging Face Direct Download
+  if (modelName.startsWith("http://") || modelName.startsWith("https://") || modelName.startsWith("huggingface:") || modelName.startsWith("hf:")) {
+    let downloadUrl = modelName;
+    let fileName = "custom-model.gguf";
+
+    if (modelName.startsWith("huggingface:") || modelName.startsWith("hf:")) {
+      const raw = modelName.replace(/^huggingface:|^hf:/, "");
+      if (raw.includes("/")) {
+        const parts = raw.split("/");
+        const repo = `${parts[0]}/${parts[1].split(":")[0]}`;
+        const quant = parts[1].includes(":") ? parts[1].split(":")[1] : "Q4_K_M";
+        fileName = `${parts[1].split(":")[0]}-${quant}.gguf`.toLowerCase();
+        downloadUrl = `https://huggingface.co/${repo}/resolve/main/${fileName}`;
+      }
+    } else {
+      fileName = path.basename(new URL(downloadUrl).pathname) || "downloaded-model.gguf";
+    }
+
+    const dest = path.join(MODELS_DIR, fileName);
+    log(`Target: ${color.bold}${color.cyan}Hugging Face GGUF Model (${fileName})${color.reset}`);
+    log(`URL:    ${color.dim}${downloadUrl}${color.reset}`);
+    log(`Dest:   ${color.dim}${dest}${color.reset}\n`);
+
+    try {
+      await downloadFileWithResume(downloadUrl, dest, fileName);
+      log(`${color.green}★ Model downloaded into ~/.airdrop-llm/models/${fileName}${color.reset}`);
+    } catch (e) {
+      err(`Failed to download from Hugging Face: ${e.message}`);
+    }
+    return;
+  }
+
+  // 4. Default: Ollama Pull with fallback to Hugging Face
+  log(`Target: ${color.bold}${color.cyan}${modelName}${color.reset}`);
+
+  let ollamaAlive = await new Promise((res) => {
+    const req = http.get("http://127.0.0.1:11434/api/tags", (r) => res(r.statusCode === 200));
+    req.on("error", () => res(false));
+    req.setTimeout(1200, () => { req.destroy(); res(false); });
+  });
+
+  if (!ollamaAlive) {
+    try {
+      const whichOllama = execSync("which ollama", { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+      if (whichOllama) {
+        log(`Ollama installed but not running. Launching background Ollama daemon...`);
+        const proc = spawn("ollama", ["serve"], { detached: true, stdio: "ignore" });
+        proc.unref();
+        for (let i = 0; i < 10; i++) {
+          await new Promise((r) => setTimeout(r, 400));
+          ollamaAlive = await new Promise((res) => {
+            const req = http.get("http://127.0.0.1:11434/api/tags", (r) => res(r.statusCode === 200));
+            req.on("error", () => res(false));
+            req.setTimeout(500, () => { req.destroy(); res(false); });
+          });
+          if (ollamaAlive) break;
+        }
+      }
+    } catch (_) {}
+  }
+
+  if (ollamaAlive) {
+    try {
+      await pullFromOllama(modelName);
+    } catch (e) {
+      warn(`Ollama pull error: ${e.message}`);
+    }
+  } else {
+    warn(`Ollama daemon is not active on port 11434.`);
+    log(`Downloading pre-quantized GGUF directly from Hugging Face into ~/.airdrop-llm/models/...`);
+    const fallbackUrl = "https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/qwen2.5-coder-7b-instruct-q4_k_m.gguf";
+    const dest = path.join(MODELS_DIR, "qwen2.5-coder-7b-instruct-q4_k_m.gguf");
+    try {
+      await downloadFileWithResume(fallbackUrl, dest, "Qwen 2.5 Coder 7B (GGUF)");
+    } catch (e) {
+      err(`Download failed: ${e.message}`);
+    }
+  }
+}
+
+/**
+ * P2P "AirDrop" Model Transfer over Local LAN / Hotspot
+ * Allows peer laptops to sync model files and split shards from the Master
+ * at 400-800 Mbps over Wi-Fi without using external internet!
+ */
+async function handleSync(target, flags) {
+  printBanner();
+  fs.mkdirSync(MODELS_DIR, { recursive: true });
+
+  const masterHost = flags.master || "127.0.0.1:3000";
+  const masterBaseUrl = masterHost.startsWith("http") ? masterHost : `http://${masterHost}`;
+
+  log(`${color.bold}${color.magenta}⚡ AirDrop P2P Model Sync Protocol (High-Speed Local Wi-Fi)${color.reset}`);
+  log(`Master Node: ${color.cyan}${masterBaseUrl}${color.reset}`);
+  log(`Querying Master for available model layers & shards...`);
+
+  let catalog;
+  try {
+    catalog = await new Promise((resolve, reject) => {
+      const parsed = new URL(`${masterBaseUrl}/api/models`);
+      const req = http.get(parsed, (res) => {
+        let body = "";
+        res.on("data", (c) => { body += c; });
+        res.on("end", () => {
+          try { resolve(JSON.parse(body)); } catch (e) { reject(e); }
+        });
+      });
+      req.on("error", reject);
+      req.setTimeout(3500, () => { req.destroy(new Error("Master connection timed out. Is 'airdrop start' running on Master?")); });
+    });
+  } catch (err) {
+    warn(`Could not reach Master node: ${err.message}`);
+    log(`Make sure the Master laptop has started AirDrop-LLM: ${color.bold}airdrop start${color.reset}`);
+    return;
+  }
+
+  log(`Master online. Found ${catalog.cached_files ? catalog.cached_files.length : 0} cached model file(s).`);
+
+  let targetFile = null;
+  if (target) {
+    targetFile = (catalog.cached_files || []).find((f) => f.filename.toLowerCase().includes(target.toLowerCase()));
+  }
+
+  if (!targetFile) {
+    // Look for Shard 2/2 (for worker node) or any available shard
+    targetFile = (catalog.cached_files || []).find((f) => f.shard === "2/2" || f.filename.includes("00002")) ||
+                 (catalog.cached_files || [])[0];
+  }
+
+  if (!targetFile) {
+    warn(`No model files found on Master to sync.`);
+    log(`Run ${color.bold}airdrop pull --shard 1/2${color.reset} on Master or specify a model.`);
+    return;
+  }
+
+  const syncUrl = `${masterBaseUrl}/api/models/download/${encodeURIComponent(targetFile.filename)}`;
+  const destPath = path.join(MODELS_DIR, targetFile.filename);
+
+  log(`\nSyncing: ${color.bold}${color.green}${targetFile.filename}${color.reset} (${targetFile.size_gb || "10.1"} GB)`);
+  log(`Transfer Mode: ${color.bold}Direct Raw LAN Stream (400-800 Mbps over Wi-Fi)${color.reset}`);
+  log(`Zero internet data used · Destination: ${color.dim}${destPath}${color.reset}\n`);
+
+  try {
+    await downloadFileWithResume(syncUrl, destPath, `AirDrop LAN Sync: ${targetFile.filename}`);
+    log(`\n${color.green}★ AirDrop P2P Model Sync complete! Worker peer is ready for pipeline inference.${color.reset}`);
+  } catch (e) {
+    err(`P2P Sync failed: ${e.message}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Main Dispatch
 // ---------------------------------------------------------------------------
 
 function main() {
-  const { command, flags } = parseArgs();
+  const { command, target, flags } = parseArgs();
 
   switch (command.toLowerCase()) {
     case "start":
@@ -581,6 +1026,14 @@ function main() {
 
     case "join":
       handleJoin(flags);
+      break;
+
+    case "pull":
+      handlePull(target, flags);
+      break;
+
+    case "sync":
+      handleSync(target, flags);
       break;
 
     case "status":

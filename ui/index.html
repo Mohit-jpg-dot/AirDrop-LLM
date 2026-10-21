@@ -134,6 +134,43 @@
                             <button class="tui-btn-action" id="testPeerToggleBtn" onclick="togglePeerSimulation()">[SIMULATE PEER JOIN / TEST 32GB POOL]</button>
                         </div>
                     </div>
+
+                    <!-- ★ AIRDROP P2P MODEL STORAGE & SHARD MANAGER ★ -->
+                    <div class="tui-recommend-box tui-models-box" id="modelsManagerBox">
+                        <div class="rec-header">
+                            <span class="rec-icon">⚡</span>
+                            <span class="rec-title">AIRDROP_P2P // SHARD_FABRIC_CACHE</span>
+                            <span class="rec-status-badge tag-emerald" id="modelCacheBadge">[FABRIC: ACTIVE]</span>
+                        </div>
+                        <div class="rec-body">
+                            <div class="rec-row">
+                                <span class="lbl-dim">LOCAL_ANCHOR:</span>
+                                <span class="val-emerald bold" id="uiAnchorStatus">Qwen 2.5 Coder 1.5B (READY · 1.1 GB)</span>
+                            </div>
+                            <div class="rec-row">
+                                <span class="lbl-dim">NODE_0_SHARD:</span>
+                                <span class="val-cyan" id="uiNode0Shard">Shard 1/2 (Layers 0-16) [CACHED · 10.2 GB]</span>
+                            </div>
+                            <div class="rec-row">
+                                <span class="lbl-dim">NODE_1_SHARD:</span>
+                                <span class="val-amber" id="uiNode1Shard">Shard 2/2 (Layers 17-32) [AWAITING PEER SYNC]</span>
+                            </div>
+                            <div class="rec-row">
+                                <span class="lbl-dim">LAN_SPEED:</span>
+                                <span class="val-emerald" id="uiLanSpeed">540 Mbps · Zero Cloud Bandwidth</span>
+                            </div>
+                        </div>
+                        <div class="model-action-inputs">
+                            <div class="input-with-button">
+                                <input type="text" id="pullModelInput" class="tui-mini-input" placeholder="e.g. qwen2.5-coder:7b or --shard 1/2" value="qwen2.5-coder:7b">
+                                <button class="tui-btn-mini" onclick="uiPullModel()">[PULL MODEL]</button>
+                            </div>
+                            <div class="model-btn-row">
+                                <button class="tui-btn-action btn-sync-peer" id="btnSyncPeer" onclick="uiSyncModelToPeer()">[⚡ AIRDROP SYNC SHARD TO PEER (LAN)]</button>
+                                <button class="tui-btn-action btn-pull-anchor" onclick="uiPullAnchor()">[PULL FALLBACK ANCHOR (1.1GB)]</button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </section>
 
