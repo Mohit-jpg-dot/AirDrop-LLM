@@ -1,6 +1,6 @@
 [package]
 name = "airdrop-daemon"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 authors = ["AirDrop-LLM Contributors"]
 description = "High-performance async P2P inference broker daemon for distributed LLM pipeline parallelism"

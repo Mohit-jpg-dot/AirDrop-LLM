@@ -1079,7 +1079,7 @@ const httpServer = http.createServer((req, res) => {
   // 1. Health check
   if (pathname === "/api/health" && req.method === "GET") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ status: "ok", version: "0.1.4", ws_port: wsPort, model: activeModelTag }));
+    res.end(JSON.stringify({ status: "ok", version: "0.1.5", ws_port: wsPort, model: activeModelTag }));
     return;
   }
 

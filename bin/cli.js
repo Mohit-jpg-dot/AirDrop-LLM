@@ -32,8 +32,22 @@ const { URL } = require("url");
 // Constants
 // ---------------------------------------------------------------------------
 
-const BINARY_NAME = os.platform() === "win32" ? "airdrop-daemon.exe" : "airdrop-daemon";
-const BINARY_PATH = path.resolve(__dirname, BINARY_NAME);
+function getDaemonTarget() {
+  const winExe = path.resolve(__dirname, "airdrop-daemon.exe");
+  if (os.platform() === "win32" && fs.existsSync(winExe)) {
+    return { command: winExe, argsPrefix: [], display: winExe };
+  }
+  const scriptPath = path.resolve(__dirname, "airdrop-daemon");
+  if (fs.existsSync(scriptPath)) {
+    return { command: process.execPath, argsPrefix: [scriptPath], display: scriptPath };
+  }
+  const defaultBin = path.resolve(__dirname, "airdrop-daemon");
+  if (fs.existsSync(defaultBin)) {
+    return { command: defaultBin, argsPrefix: [], display: defaultBin };
+  }
+  return null;
+}
+
 const PID_FILE = path.join(os.tmpdir(), "airdrop-llm.pid");
 const MODEL_PID_FILE = path.join(os.tmpdir(), "airdrop-model.pid");
 const LOG_DIR = path.join(os.homedir(), ".airdrop-llm", "logs");
@@ -68,7 +82,7 @@ function err(msg)  { console.error(`${color.red}[airdrop]${color.reset} ${msg}`)
 function printBanner() {
   console.log(`
 ${color.bold}${color.cyan}    ╔═══════════════════════════════════════════════╗
-    ║           AirDrop-LLM  v0.1.4                 ║
+    ║           AirDrop-LLM  v0.1.5                 ║
     ║   Offline Distributed Inference Broker         ║
     ╚═══════════════════════════════════════════════╝${color.reset}
   `);
@@ -229,8 +243,9 @@ function openBrowser(url) {
 }
 
 function verifyBinary() {
-  if (!fs.existsSync(BINARY_PATH)) {
-    err(`Daemon binary not found at: ${BINARY_PATH}`);
+  const target = getDaemonTarget();
+  if (!target) {
+    err(`Daemon executable or script not found in: ${__dirname}`);
     process.exit(1);
   }
 }
@@ -369,8 +384,14 @@ function spawnDaemon(mode, flags) {
   if (flags.model)   daemonArgs.push(`--model=${flags.model}`);
   if (flags.verbose) daemonArgs.push("--verbose");
 
+  const target = getDaemonTarget();
+  if (!target) {
+    err(`Daemon executable or script not found in: ${__dirname}`);
+    process.exit(1);
+  }
+
   log(`Spawning daemon in ${color.bold}${mode}${color.reset} mode...`);
-  log(`Binary: ${color.dim}${BINARY_PATH}${color.reset}`);
+  log(`Target: ${color.dim}${target.display}${color.reset}`);
   log(`Log:    ${color.dim}${logFile}${color.reset}`);
 
   const logFd = fs.openSync(logFile, "a");
@@ -379,7 +400,7 @@ function spawnDaemon(mode, flags) {
   const pkgUiDir = path.resolve(__dirname, "..", "ui");
   const resolvedUiDir = fs.existsSync(path.join(cwdUiDir, "index.html")) ? cwdUiDir : pkgUiDir;
 
-  const child = spawn(BINARY_PATH, daemonArgs, {
+  const child = spawn(target.command, [...target.argsPrefix, ...daemonArgs], {
     detached: true,
     stdio: ["ignore", logFd, logFd],
     env: {
@@ -644,7 +665,7 @@ function downloadFileWithResume(fileUrl, destinationPath, label = "Downloading")
 
       const client = parsed.protocol === "https:" ? https : http;
       const headers = {
-        "User-Agent": "AirDrop-LLM/0.1.4 (+https://github.com/Mohit-jpg-dot/AirDrop-LLM)",
+        "User-Agent": "AirDrop-LLM/0.1.5 (+https://github.com/Mohit-jpg-dot/AirDrop-LLM)",
       };
 
       if (existingBytes > 0) {
