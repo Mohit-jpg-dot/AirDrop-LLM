@@ -58,7 +58,7 @@ Just like Apple's AirDrop seamlessly discovers nearby devices over Wi-Fi, **AirD
                       └─────────────────────────────────────────────────────────────┘
 ```
 
-> **🟢 CURRENT STATUS: IN ACTIVE PRODUCTION (v0.1.3)**  
+> **🟢 CURRENT STATUS: IN ACTIVE PRODUCTION (v0.1.4)**  
 > AirDrop-LLM is deployed and operational for multi-node local inference. Heterogeneous Metal (macOS) and CUDA (Linux/Windows) pooling is verified with sub-millisecond local network latencies and off-heap OpenAI API gateway support.
 
 ---
@@ -667,12 +667,16 @@ AirDrop-LLM contains an intelligent hardware synthesis matrix that scales with y
   - [x] FIFO Multi-Tenant Queue & Atomic GPU Memory Lock.
   - [x] Delta Tensor Serialization & Static Layer Caching (>92% bandwidth reduction).
   - [x] Real-time Network Supervisor with Automated HTTP 429 Load Shedding.
-- [x] **v0.1.3 (Current Production)**:
+- [x] **v0.1.3**:
   - [x] **Zero-Copy Double-Buffered Memory Arena (`src/engine/arena.rs`)**: 64-byte SIMD alignment, POSIX `mlock` memory pinning, and lock-free 4-state interleaving.
   - [x] **Bare-Metal OS Kernel TCP Telemetry Watchdog (`src/network/heartbeat.rs`)**: 0% user-space CPU polling via `socket2` low-level `setsockopt` (1s idle, 1ms interval, 1 drop).
   - [x] **Asymmetric 0GB Client Disk Streaming (`src/engine/streamer.rs`)**: Layers 1–20 stream on-demand over TCP :9997 directly into off-heap pinned RAM.
   - [x] **Live Mid-Token Context Fallback Supervisor (`src/engine/supervisor.rs`)**: Zero-leak memory flush + instantaneous hot-swap to local anchor model.
   - [x] **Two-Tier Model CLI & P2P AirDrop Sync (`bin/cli.js`)**: `airdrop pull [--anchor|--shard]`, HTTP Range resume, and local Wi-Fi sync.
+- [x] **v0.1.4 (Current Production)**:
+  - [x] **Claude Artifact Canvas & Multi-Tab Sandbox Drawer (`ui/src/components/ClaudeArtifactCanvas.jsx`)**: Live sandboxed iframe preview, react/html/svg tab switcher, and zero-flicker reload.
+  - [x] **Zero-Dependency Native Syntax Engine (`ui/src/components/ClaudeMarkdownBlock.jsx`)**: Tokenized syntax colorizer for Rust, Python, JavaScript, HTML, CSS, Bash.
+  - [x] **SSE Gateway Listener & Virtual Paged KV-Cache (`ui/src/gateway_listener.js`)**: Real-time zero-delay token streaming via direct TextNode injection.
 - [ ] **v0.2.0**: Tensor Parallelism (TP) over 10GbE / Thunderbolt Bridge connections for ultra-low latency attention matrix splitting.
 - [ ] **v0.3.0**: Dynamic Layer Auto-Rebalancing (automatically redistributes layers if a laptop's battery drops or thermal throttling occurs).
 - [ ] **v0.4.0**: Cross-platform Mobile Worker Node (`airdrop join` on iPads / Android tablets to contribute 8GB-16GB VRAM to the pool).

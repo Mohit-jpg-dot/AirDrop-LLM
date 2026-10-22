@@ -11,7 +11,8 @@
   },
   "homepage": "https://github.com/Mohit-jpg-dot/AirDrop-LLM#readme",
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com"
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "keywords": [
     "llm",
@@ -33,7 +34,7 @@
     "airdrop": "bin/cli.js"
   },
   "scripts": {
-    "prepublishOnly": "cargo build --release --manifest-path ./daemon/Cargo.toml && node scripts/verify-binaries.js",
+    "prepublishOnly": "node scripts/verify-binaries.js",
     "postinstall": "node scripts/install-binary.js",
     "release": "npm version patch && git push origin main --tags && npm publish"
   },
