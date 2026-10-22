@@ -38,22 +38,45 @@ let uiPort = 3000;
 let wsPort = 3001;
 let rawModelArg = null;
 let verbose = false;
+let masterAddress = null;
 
 const MODELS_DIR = path.join(os.homedir(), ".airdrop-llm", "models");
 
-for (const arg of args) {
+for (let i = 0; i < args.length; i++) {
+  const arg = args[i];
   if (arg.startsWith("--mode=")) {
     mode = arg.split("=")[1];
+  } else if (arg === "--mode" && i + 1 < args.length) {
+    mode = args[++i];
   } else if (arg.startsWith("--ui-port=")) {
     uiPort = parseInt(arg.split("=")[1], 10) || 3000;
+  } else if (arg === "--ui-port" && i + 1 < args.length) {
+    uiPort = parseInt(args[++i], 10) || 3000;
   } else if (arg.startsWith("--ws-port=")) {
     wsPort = parseInt(arg.split("=")[1], 10) || 3001;
+  } else if (arg === "--ws-port" && i + 1 < args.length) {
+    wsPort = parseInt(args[++i], 10) || 3001;
   } else if (arg.startsWith("--model=")) {
     rawModelArg = arg.split("=")[1];
+  } else if (arg === "--model" && i + 1 < args.length) {
+    rawModelArg = args[++i];
+  } else if (arg.startsWith("--master=")) {
+    masterAddress = arg.split("=")[1];
+  } else if (arg === "--master" && i + 1 < args.length) {
+    masterAddress = args[++i];
   } else if (arg === "--verbose") {
     verbose = true;
   }
 }
+
+// Global process error handlers to prevent silent crashes
+process.on("uncaughtException", (err) => {
+  console.error(`[airdrop-daemon] Uncaught Exception: ${err.message}`);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error(`[airdrop-daemon] Unhandled Rejection:`, reason);
+});
 
 // ---------------------------------------------------------------------------
 // Model Catalog & Hardware Recommendation Engine
@@ -567,6 +590,10 @@ wsHttpServer.on("upgrade", (req, socket, head) => {
   socket.on("error", () => { wsClients.delete(socket); });
 });
 
+wsHttpServer.on("error", (err) => {
+  if (verbose) console.warn(`[airdrop-daemon] Telemetry WebSocket gateway warning: ${err.message}`);
+});
+
 wsHttpServer.listen(wsPort, "0.0.0.0", () => {
   console.log(`[airdrop-daemon] Telemetry WebSocket gateway listening on ws://localhost:${wsPort}`);
 });
@@ -620,6 +647,11 @@ function checkOllamaApiRunning() {
 }
 
 async function ensureOllamaRunning() {
+  if (mode === "worker") {
+    if (verbose) console.log("[airdrop-daemon] Worker mode active: skipping local Ollama engine initialization.");
+    return false;
+  }
+
   const isRunning = await checkOllamaApiRunning();
   if (isRunning) {
     if (verbose) console.log("[airdrop-daemon] Local Ollama service is already active on port 11434.");
@@ -631,6 +663,9 @@ async function ensureOllamaRunning() {
     spawnedOllamaChild = spawn("ollama", ["serve"], {
       detached: true,
       stdio: "ignore",
+    });
+    spawnedOllamaChild.on("error", (err) => {
+      console.warn("[airdrop-daemon] Notice: Local Ollama service not available:", err.message);
     });
     spawnedOllamaChild.unref();
 
@@ -716,11 +751,11 @@ function setupUdpDiscovery() {
   try {
     udpSocket = dgram.createSocket({ type: "udp4", reuseAddr: true });
 
-    if (mode === "master") {
-      udpSocket.on("error", (err) => {
-        if (verbose) console.log(`[airdrop-daemon] UDP error: ${err.message}`);
-      });
+    udpSocket.on("error", (err) => {
+      if (verbose) console.log(`[airdrop-daemon] UDP socket error: ${err.message}`);
+    });
 
+    if (mode === "master") {
       udpSocket.on("message", (msg, rinfo) => {
         const text = msg.toString("utf8");
         if (text.startsWith("AIRDROP_LLM_PING:")) {
@@ -756,7 +791,7 @@ function setupUdpDiscovery() {
             const pong = Buffer.from(
               `AIRDROP_LLM_PONG:${JSON.stringify({ assigned_id: peerId, master_name: os.hostname() })}`
             );
-            udpSocket.send(pong, rinfo.port, rinfo.address);
+            udpSocket.send(pong, rinfo.port, rinfo.address, () => {});
           } catch (_) {}
         }
       });
@@ -768,9 +803,20 @@ function setupUdpDiscovery() {
         } catch (_) {}
       });
     } else {
-      // Worker Mode: Send broadcast ping periodically
+      // Worker Mode: Listen for Master PONG and broadcast/direct ping periodically
+      udpSocket.on("message", (msg, rinfo) => {
+        const text = msg.toString("utf8");
+        if (text.startsWith("AIRDROP_LLM_PONG:")) {
+          try {
+            const raw = text.slice("AIRDROP_LLM_PONG:".length);
+            const data = JSON.parse(raw);
+            console.log(`[airdrop-daemon] [OK] Connected to Cluster Master (${data.master_name || rinfo.address})`);
+          } catch (_) {}
+        }
+      });
+
       udpSocket.bind(() => {
-        udpSocket.setBroadcast(true);
+        try { udpSocket.setBroadcast(true); } catch (_) {}
         const host = getHostHardware();
         const pingMsg = Buffer.from(
           `AIRDROP_LLM_PING:${JSON.stringify({
@@ -783,9 +829,44 @@ function setupUdpDiscovery() {
           })}`
         );
 
-        setInterval(() => {
+        const sendDiscoveryPing = () => {
+          // 1. Send general broadcast
           udpSocket.send(pingMsg, DISCOVERY_PORT, "255.255.255.255", () => {});
-        }, 2000);
+
+          // 2. Send subnet-directed broadcast for each network interface
+          try {
+            const interfaces = os.networkInterfaces();
+            for (const name of Object.keys(interfaces)) {
+              for (const iface of interfaces[name]) {
+                if (iface.family === "IPv4" && !iface.internal && iface.netmask) {
+                  const ipParts = iface.address.split(".").map(Number);
+                  const maskParts = iface.netmask.split(".").map(Number);
+                  const bcast = ipParts.map((b, idx) => (b | (~maskParts[idx] & 255))).join(".");
+                  if (bcast !== "255.255.255.255") {
+                    udpSocket.send(pingMsg, DISCOVERY_PORT, bcast, () => {});
+                  }
+                }
+              }
+            }
+          } catch (_) {}
+
+          // 3. Send direct unicast ping if --master address specified
+          if (masterAddress) {
+            let hostOnly = masterAddress;
+            let portOnly = DISCOVERY_PORT;
+            if (hostOnly.includes(":")) {
+              const parts = hostOnly.split(":");
+              hostOnly = parts[0];
+              if (parts[1] && parts[1] !== "3000") {
+                portOnly = parseInt(parts[1], 10) || DISCOVERY_PORT;
+              }
+            }
+            udpSocket.send(pingMsg, portOnly, hostOnly, () => {});
+          }
+        };
+
+        sendDiscoveryPing();
+        setInterval(sendDiscoveryPing, 2000);
       });
     }
   } catch (err) {
@@ -1079,7 +1160,7 @@ const httpServer = http.createServer((req, res) => {
   // 1. Health check
   if (pathname === "/api/health" && req.method === "GET") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ status: "ok", version: "0.1.5", ws_port: wsPort, model: activeModelTag }));
+    res.end(JSON.stringify({ status: "ok", version: "0.1.6", ws_port: wsPort, model: activeModelTag }));
     return;
   }
 
@@ -1578,20 +1659,28 @@ async function bootDaemon() {
   setupUdpDiscovery();
 
   // Start HTTP UI Server
+  httpServer.on("error", (err) => {
+    if (verbose) console.warn(`[airdrop-daemon] HTTP server warning: ${err.message}`);
+  });
   httpServer.listen(uiPort, "0.0.0.0", () => {
     console.log(`[airdrop-daemon] Valkyrie-HUD HTTP server active at http://localhost:${uiPort}`);
     console.log(`[airdrop-daemon] Active model target: ${activeModelTag} ${activeModelPath ? `(${activeModelPath})` : ""}`);
   });
 
   // Start OpenAI-Compatible REST API Gateway (:9995)
+  openAiServer.on("error", (err) => {
+    if (verbose) console.warn(`[airdrop-daemon] OpenAI proxy warning: ${err.message}`);
+  });
   openAiServer.listen(OPENAI_PORT, "0.0.0.0", () => {
     console.log(`[airdrop-daemon] OpenAI-compatible reverse proxy listening at http://localhost:${OPENAI_PORT}/v1`);
   });
 
-  // Ensure Ollama service is active and preload model into Metal GPU Unified Memory
-  const ollamaOk = await ensureOllamaRunning();
-  if (ollamaOk) {
-    preloadModelIntoMemory(activeModelTag);
+  // Cluster Master preloads model into GPU Unified Memory; Worker skips local model engine
+  if (mode === "master") {
+    const ollamaOk = await ensureOllamaRunning();
+    if (ollamaOk) {
+      preloadModelIntoMemory(activeModelTag);
+    }
   }
 }
 

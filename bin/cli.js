@@ -82,7 +82,7 @@ function err(msg)  { console.error(`${color.red}[airdrop]${color.reset} ${msg}`)
 function printBanner() {
   console.log(`
 ${color.bold}${color.cyan}    ╔═══════════════════════════════════════════════╗
-    ║           AirDrop-LLM  v0.1.5                 ║
+    ║           AirDrop-LLM  v0.1.6                 ║
     ║   Offline Distributed Inference Broker         ║
     ╚═══════════════════════════════════════════════╝${color.reset}
   `);
@@ -113,7 +113,7 @@ ${color.bold}OPTIONS:${color.reset}
     --model <path>    Path to the GGUF model file to load into GPU memory.
     --shard <1/2|2/2> Download only half of a large model (e.g. 1/2 for Node 0, 2/2 for Node 1).
     --anchor          Download the lightweight 1.1GB emergency fallback anchor (Qwen 2.5 Coder 1.5B).
-    --master <ip:p>   Specify master IP and port for P2P sync (default: 127.0.0.1:3000).
+    --master <ip[:p]> Specify master IP address for cluster join or P2P sync.
     --verbose         Enable verbose daemon logging.
 
 ${color.bold}EXAMPLES:${color.reset}
@@ -135,8 +135,11 @@ ${color.bold}EXAMPLES:${color.reset}
     ${color.dim}# Start cluster head with specific model and verbose output${color.reset}
     airdrop start --model ~/models/qwen3.5-9b.gguf --verbose
 
-    ${color.dim}# Join an existing cluster from another laptop on the network${color.reset}
+    ${color.dim}# Join an existing cluster via automatic local UDP broadcast${color.reset}
     airdrop join
+
+    ${color.dim}# Join cluster directly using Master's local IP (recommended for Windows <-> Mac)${color.reset}
+    airdrop join --master 192.168.1.15
 
     ${color.dim}# Check live cluster health and model recommendation${color.reset}
     airdrop status
@@ -159,12 +162,15 @@ function parseArgs() {
   for (let i = 1; i < args.length; i++) {
     const arg = args[i];
     if (arg.startsWith("--")) {
-      const key = arg.slice(2);
-      if (i + 1 < args.length && !args[i + 1].startsWith("--")) {
-        flags[key] = args[i + 1];
+      const rest = arg.slice(2);
+      if (rest.includes("=")) {
+        const [k, v] = rest.split("=");
+        flags[k] = v;
+      } else if (i + 1 < args.length && !args[i + 1].startsWith("--")) {
+        flags[rest] = args[i + 1];
         i++;
       } else {
-        flags[key] = true;
+        flags[rest] = true;
       }
     } else {
       positionals.push(arg);
@@ -215,8 +221,13 @@ function isProcessAlive(pid) {
 
 function isPortInUse(port) {
   try {
-    const stdout = execSync(`lsof -i :${port} -t`, { stdio: ["ignore", "pipe", "ignore"] });
-    return Boolean(stdout.toString().trim());
+    if (os.platform() === "win32") {
+      const stdout = execSync(`netstat -ano | findstr :${port}`, { stdio: ["ignore", "pipe", "ignore"] });
+      return Boolean(stdout.toString().trim());
+    } else {
+      const stdout = execSync(`lsof -i :${port} -t`, { stdio: ["ignore", "pipe", "ignore"] });
+      return Boolean(stdout.toString().trim());
+    }
   } catch (_) {
     return false;
   }
@@ -382,6 +393,7 @@ function spawnDaemon(mode, flags) {
   const daemonArgs = [`--mode=${mode}`];
   if (flags.port)    daemonArgs.push(`--ui-port=${flags.port}`);
   if (flags.model)   daemonArgs.push(`--model=${flags.model}`);
+  if (flags.master)  daemonArgs.push(`--master=${flags.master}`);
   if (flags.verbose) daemonArgs.push("--verbose");
 
   const target = getDaemonTarget();
@@ -480,6 +492,9 @@ function handleJoin(flags) {
   spawnDaemon("worker", flags);
 
   log(`Worker daemon launched. Scanning for cluster head via UDP broadcast on port 9998...`);
+  if (flags.master) {
+    log(`Directly connecting to Master node at ${color.cyan}${flags.master}${color.reset}...`);
+  }
   log(`The daemon will automatically register hardware capabilities with the master.`);
 }
 
@@ -665,7 +680,7 @@ function downloadFileWithResume(fileUrl, destinationPath, label = "Downloading")
 
       const client = parsed.protocol === "https:" ? https : http;
       const headers = {
-        "User-Agent": "AirDrop-LLM/0.1.5 (+https://github.com/Mohit-jpg-dot/AirDrop-LLM)",
+        "User-Agent": "AirDrop-LLM/0.1.6 (+https://github.com/Mohit-jpg-dot/AirDrop-LLM)",
       };
 
       if (existingBytes > 0) {
